@@ -1,0 +1,24 @@
+scipaper_affinity:
+  id: scipaper_affinity.val.ab-v1
+  metrics: [accuracy]
+scipaper_affinity.val.ab-v1:
+  class: evals.elsuite.table_extract:TableExtract
+  args:
+    dataset: /Users/chang/AI_projects/Uni-finder/assays/0003001_0004000/answer/data.jsonl
+    instructions: |
+      Please summarize the names, SMILES, affinities, target info (protein or cell line), and affinity types (chosen from IC50, EC50, TC50, GI50, Ki, Kd) of all inhibitors in the paper, and output in json format. For example:
+      ```json
+      [
+          {
+              "Compound": "5a",
+              "Name": "d4a",
+              "SMILES": "Unknown",
+              "Affinities": {
+                  "5HT1A (IC50)": "2.0 nM",
+                  "5HT1D (IC50)": "8.0 nM",
+                  "5HT-UT (IC50)": "12.6 nM",
+                  "5HT1E (IC50)": ">1000 nM"
+              }
+          }
+      ]
+      ```
