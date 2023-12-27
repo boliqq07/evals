@@ -2,13 +2,8 @@ from typing import Any, Optional, Union
 import os
 import requests
 
-from openai import OpenAI
-
 from evals.api import CompletionFn, CompletionResult
-from evals.base import CompletionFnSpec
 from evals.prompt.base import (
-    ChatCompletionPrompt,
-    CompletionPrompt,
     OpenAICreateChatPrompt,
     OpenAICreatePrompt,
     Prompt,
@@ -39,7 +34,7 @@ class Struct:
 
 class BaseCompletionResult(CompletionResult):
     def __init__(self, raw_data: Any, prompt: Any):
-        self.raw_data = Struct(raw_data) if type(raw_data) == dict else raw_data
+        self.raw_data = Struct(**raw_data) if type(raw_data) == dict else raw_data
         self.prompt = prompt
 
     def get_completions(self) -> list[str]:
@@ -60,6 +55,7 @@ class ZhishuCompletionFn(CompletionFn):
     def __init__(
             self,
             model: Optional[str] = None,
+            instructions: Optional[str] = "You are a helpful assistant on extracting information from files.",
             api_base: Optional[str] = None,
             api_key: Optional[str] = None,
             n_ctx: Optional[int] = None,
@@ -67,6 +63,7 @@ class ZhishuCompletionFn(CompletionFn):
             **kwargs,
     ):
         self.model = model
+        self.instructions = instructions
         self.api_base = api_base
         self.api_key = api_key
         self.n_ctx = n_ctx
@@ -85,26 +82,20 @@ class ZhishuCompletionFn(CompletionFn):
                     or (isinstance(prompt, list) and all(isinstance(msg, dict) for msg in prompt))
             ), f"Got type {type(prompt)}, with val {type(prompt[0])} for prompt, expected str or list[int] or list[str] or list[dict[str, str]]"
 
-            prompt = CompletionPrompt(
-                raw_prompt=prompt,
-            )
-
-        openai_create_prompt: OpenAICreatePrompt = prompt.to_formatted_prompt()
-
         url = f"https://api.zhishuyun.com/openai/gpt-4-all?token={self.api_key or os.environ['ZHISHU_API_KEY']}"
         headers = {
             "content-type": "application/json"
         }
         payload = {
-            "model": "gpt-4-all",
+            "model": self.model,
             "messages": [
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": self.instructions},
                 {"role": "user", "content": f"{kwargs['file_link']} {prompt}"}
             ]
         }
 
         result = request_with_timeout(requests.post, url, json=payload, headers=headers)
 
-        result = ZhishuCompletionResult(raw_data=result.json(), prompt=openai_create_prompt)
+        result = ZhishuCompletionResult(raw_data=result.json(), prompt=prompt)
         record_sampling(prompt=result.prompt, sampled=result.get_completions())
         return result

@@ -68,7 +68,6 @@ def init_oss():
 class FileSample(BaseModel):
     file_name: Optional[str]
     file_link: Optional[str]
-    question: Optional[str]
     answerfile_name: Optional[str]
     answerfile_link: Optional[str]
     compare_fields: List[str]
@@ -79,26 +78,27 @@ def get_dataset(data_jsonl: str) -> list[FileSample]:
     raw_samples = evals.get_jsonl(data_jsonl)
 
     for raw_sample in raw_samples:
-        if "file_name" in raw_sample:
-            oss_file = "changjunhan/" + os.path.basename(raw_sample["file_name"])
-            raw_sample["file_link"] = "https://dp-filetrans-bj.oss-cn-beijing.aliyuncs.com/" + oss_file
+        for ftype in ["", "answer"]:
+            if f"{ftype}file_name" in raw_sample:
+                oss_file = "changjunhan/" + os.path.basename(raw_sample[f"{ftype}file_name"])
+                raw_sample[f"{ftype}file_link"] = "https://dp-filetrans-bj.oss-cn-beijing.aliyuncs.com/" + oss_file
 
-            exists = bucket.object_exists(oss_file)
-            if exists:
-                print(f"文件 {oss_file} 已存在于 OSS 中。")
-            else:
-                # 上传文件
-                bucket.put_object_from_file(oss_file, raw_sample["file_name"])
-                print(f"文件 {oss_file} 已上传到 OSS。")
-        elif "file_link" in raw_sample:
-            local_file = raw_sample["file_name"] if "file_name" in raw_sample else os.path.basename(
-                raw_sample["file_link"])
-            oss_file = "changjunhan/" + os.path.basename(raw_sample["file_link"])
-            if not os.path.exists(local_file):
-                if bucket.object_exists(oss_file):
-                    # 从 OSS 下载文件
-                    bucket.get_object_to_file(oss_file, local_file)
-
+                exists = bucket.object_exists(oss_file)
+                if exists:
+                    print(f"文件 {oss_file} 已存在于 OSS 中。")
+                else:
+                    # 上传文件
+                    bucket.put_object_from_file(oss_file, raw_sample[f"{ftype}file_name"])
+                    print(f"文件 {oss_file} 已上传到 OSS。")
+            elif f"{ftype}file_link" in raw_sample:
+                local_file = raw_sample[f"{ftype}file_name"] if f"{ftype}file_name" in raw_sample else os.path.basename(
+                    raw_sample[f"{ftype}file_link"])
+                oss_file = "changjunhan/" + os.path.basename(raw_sample[f"{ftype}file_link"])
+                if not os.path.exists(local_file):
+                    if bucket.object_exists(oss_file):
+                        # 从 OSS 下载文件
+                        bucket.get_object_to_file(oss_file, local_file)
+    print(raw_samples)
     samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
     return samples
 
@@ -122,7 +122,6 @@ class TableExtract(evals.Eval):
 
         prompt = (
                 self.instructions
-                + "\nPlease answer in json format."
                 + f"\nThe fields should at least contain {sample.compare_fields}"
         )
         result = self.completion_fn(
@@ -130,6 +129,7 @@ class TableExtract(evals.Eval):
             temperature=0.0,
             max_tokens=5,
             file_name=sample.file_name,
+            file_link=sample.file_link
         )
         sampled = result.get_completions()[0]
 
@@ -145,7 +145,7 @@ class TableExtract(evals.Eval):
             table = pd.DataFrame()
         table = parse_table_multiindex(table)
 
-        correct_answer = pd.read_csv(sample.answerfile)
+        correct_answer = pd.read_csv(sample.answerfile_name, header=[0, 1])
 
         for field in sample.compare_fields:
             match_field = field in table.columns and field in correct_answer.columns
