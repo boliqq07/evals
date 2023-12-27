@@ -3,21 +3,17 @@ import json
 import os
 import re
 
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 
 import oss2
 from oss2.credentials import EnvironmentVariableCredentialsProvider
 
-from urllib.parse import parse_qs, urlparse
-
-from datasets import load_dataset
 import pandas as pd
 from pydantic import BaseModel
 
 import evals
 import evals.metrics
 from evals.api import CompletionFn
-from evals.formatting import make_abc
 from evals.record import RecorderBase, record_match
 
 code_pattern = r"```[\s\S]*?\n([\s\S]+)\n```"
@@ -70,7 +66,7 @@ class FileSample(BaseModel):
     file_link: Optional[str]
     answerfile_name: Optional[str]
     answerfile_link: Optional[str]
-    compare_fields: List[str]
+    compare_fields: List[Union[str, Tuple]]
 
 
 def get_dataset(data_jsonl: str) -> list[FileSample]:
@@ -98,9 +94,46 @@ def get_dataset(data_jsonl: str) -> list[FileSample]:
                     if bucket.object_exists(oss_file):
                         # 从 OSS 下载文件
                         bucket.get_object_to_file(oss_file, local_file)
+        raw_sample["compare_fields"] = [field if type(field) == str else tuple(field) for field in
+                                        raw_sample["compare_fields"]]
     print(raw_samples)
     samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
     return samples
+
+
+def fuzzy_compare(a: str, b: str) -> bool:
+    """
+    Compare two strings with fuzzy matching.
+    """
+
+    def standardize_unit(s: str) -> str:
+        """
+        Standardize a (affinity) string to common units.
+        """
+        mark = "" if re.search(r"[><=]", s) is None else re.search(r"[><=]", s).group()
+        unit = s.rstrip()[-2:]
+        number = re.search(r"[0-9.\+\-]+", s).group()
+
+        if unit in ["µM", "uM"]:
+            unit = "nM"
+            number *= 1000
+        elif unit in ["mM", "mm"]:
+            unit = "nM"
+            number *= 1000000
+
+        if mark == "=":
+            mark = ""
+        return f"{mark}{number:.1f} {unit}"
+
+    unit_str = ["nM", "uM", "µM", "mM"]
+    a = a.strip()
+    b = b.strip()
+    if a[-2:] in unit_str and b[-2:] in unit_str:
+        a = standardize_unit(a)
+        b = standardize_unit(b)
+        return a == b
+    else:
+        return (a.lower() in b.lower()) or (b.lower() in a.lower())
 
 
 class TableExtract(evals.Eval):
@@ -145,7 +178,7 @@ class TableExtract(evals.Eval):
             table = pd.DataFrame()
         table = parse_table_multiindex(table)
 
-        correct_answer = pd.read_csv(sample.answerfile_name, header=[0, 1])
+        correct_answer = pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str)
 
         for field in sample.compare_fields:
             match_field = field in table.columns and field in correct_answer.columns
@@ -168,7 +201,7 @@ class TableExtract(evals.Eval):
 
                 for sample_value, correct_value in zip(table[field], correct_answer[field]):
                     record_match(
-                        correct=(sample_value == correct_value),
+                        correct=fuzzy_compare(sample_value, correct_value),
                         expected=correct_value,
                         picked=sample_value,
                         file_name=sample.file_name,
