@@ -16,9 +16,9 @@ import evals.metrics
 from evals.api import CompletionFn
 from evals.record import RecorderBase, record_match
 
-code_pattern = r"```[\s\S]*?\n([\s\S]+)\n```"
-json_pattern = r"```json[\s\S]*?\n([\s\S]+)\n```"
-csv_pattern = r"```csv[\s\S]*?\n([\s\S]+)\n```"
+code_pattern = r"```[\s\S]*?\n([\s\S]+?)\n```"
+json_pattern = r"```json[\s\S]*?\n([\s\S]+?)\n```"
+csv_pattern = r"```csv[\s\S]*?\n([\s\S]+?)\n```"
 
 
 def parse_table_multiindex(table: pd.DataFrame) -> pd.DataFrame:
@@ -27,20 +27,26 @@ def parse_table_multiindex(table: pd.DataFrame) -> pd.DataFrame:
     """
 
     df = table.copy()
-    coltypes = {col: type(df[col].iloc[0]) for col in df.columns}
-    for col, ctype in coltypes.items():
-        if ctype == str:
-            if ":" in df[col].iloc[0] and "," in df[col].iloc[0]:
-                df[col] = [{key: value for key, value in [pair.split(": ") for pair in data.split(", ")]} for data in
-                           df[col]]
-                coltypes[col] = dict
-    dfs = []
+    if df.columns.nlevels == 1:
+        coltypes = {col: type(df[col].iloc[0]) for col in df.columns}
+        for col, ctype in coltypes.items():
+            if ctype == str:
+                if ":" in df[col].iloc[0] and "," in df[col].iloc[0]:
+                    df[col] = [{key: value for key, value in [pair.split(": ") for pair in data.split(", ")]} for data
+                               in df[col]]
+                    coltypes[col] = dict
+        dfs = []
 
-    for col, ctype in coltypes.items():
-        if ctype == dict:
-            d = pd.DataFrame(df.pop(col).tolist())
-            dfs.append(d)
-    df = pd.concat([df] + dfs, axis=1)
+        for col, ctype in coltypes.items():
+            if ctype == dict:
+                d = pd.DataFrame(df.pop(col).tolist())
+                d.columns = pd.MultiIndex.from_tuples([(col, fuzzy_normalize(key)) for key in d.columns])
+                dfs.append(d)
+        df.columns = pd.MultiIndex.from_tuples([(col, "") for col in df.columns])
+        df = pd.concat([df] + dfs, axis=1)
+    if df.columns.nlevels > 1:
+        df.columns = pd.MultiIndex.from_tuples([(col, fuzzy_normalize(subcol)) for col, subcol in df.columns])
+
     return df
 
 
@@ -136,6 +142,31 @@ def fuzzy_compare(a: str, b: str) -> bool:
         return (a.lower() in b.lower()) or (b.lower() in a.lower())
 
 
+def fuzzy_normalize(s):
+    """ 标准化字符串 """
+    # 定义需要移除的单位和符号
+    units = ["µM", "µg/mL", "nM"]
+    for unit in units:
+        s = s.replace(unit, "")
+
+    # 定义特定关键字
+    keywords = ["IC50", "EC50", "TC50", "GI50", "Ki", "Kd"]
+
+    # 移除非字母数字的字符，除了空格
+    s = re.sub(r'[^\w\s]', '', s)
+
+    # 分割字符串为单词列表
+    words = s.split()
+
+    # 将关键字移到末尾
+    reordered_words = [word for word in words if word not in keywords]
+    keywords_in_string = [word for word in words if word in keywords]
+    reordered_words.extend(keywords_in_string)
+
+    # 重新组合为字符串
+    return ' '.join(reordered_words)
+
+
 class TableExtract(evals.Eval):
     def __init__(
             self,
@@ -170,6 +201,9 @@ class TableExtract(evals.Eval):
             code = re.search(code_pattern, sampled).group()
             code_content = re.sub(code_pattern, r"\1", code)
             table = pd.read_csv(StringIO(code_content))
+            if pd.isna(table.iloc[0, 0]):
+                table = pd.read_csv(StringIO(code_content), header=[0, 1])
+
         elif "json" in prompt:
             code = re.search(code_pattern, sampled).group()
             code_content = re.sub(code_pattern, r"\1", code)
@@ -177,10 +211,13 @@ class TableExtract(evals.Eval):
         else:
             table = pd.DataFrame()
         table = parse_table_multiindex(table)
+        table.to_csv("temp1.csv")
 
-        correct_answer = pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str)
+        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str))
 
         for field in sample.compare_fields:
+            if type(field) == tuple:
+                field = (field[0], fuzzy_normalize(field[1]))
             match_field = field in table.columns and field in correct_answer.columns
             record_match(
                 correct=match_field,
