@@ -1,6 +1,7 @@
 from io import StringIO
 import json
 import os
+from pathlib import Path
 import re
 
 from typing import List, Optional, Tuple, Union
@@ -99,6 +100,7 @@ def get_dataset(data_jsonl: str) -> list[FileSample]:
                 if not os.path.exists(local_file):
                     if bucket.object_exists(oss_file):
                         # 从 OSS 下载文件
+                        Path(local_file).parent.mkdir(parents=True, exist_ok=True)
                         bucket.get_object_to_file(oss_file, local_file)
         raw_sample["compare_fields"] = [field if type(field) == str else tuple(field) for field in
                                         raw_sample["compare_fields"]]
@@ -131,13 +133,16 @@ def fuzzy_compare(a: str, b: str) -> bool:
             mark = ""
         return f"{mark}{number:.1f} {unit}"
 
-    unit_str = ["nM", "uM", "µM", "mM"]
+    unit_str = ["nM", "uM", "µM", "mM", "%", " %"]
+    nan_str = ["n/a", "nan", "na", "nd", "not determined", "not tested"]
     a = a.strip()
     b = b.strip()
-    if a[-2:] in unit_str and b[-2:] in unit_str:
+    if (a[-2:] in unit_str or a[-1] in unit_str) and (b[-2:] in unit_str or b[-1] in unit_str):
         a = standardize_unit(a)
         b = standardize_unit(b)
         return a == b
+    elif a.lower() in nan_str and b.lower() in nan_str:
+        return True
     else:
         return (a.lower() in b.lower()) or (b.lower() in a.lower())
 
@@ -206,14 +211,16 @@ class TableExtract(evals.Eval):
 
         elif "json" in prompt:
             code = re.search(code_pattern, sampled).group()
-            code_content = re.sub(code_pattern, r"\1", code)
+            code_content = re.sub(code_pattern, r"\1", code).replace("\"", "")
             table = pd.DataFrame(json.loads(code_content))
         else:
             table = pd.DataFrame()
-        table = parse_table_multiindex(table)
-        table.to_csv("temp1.csv")
+        table = parse_table_multiindex(table).sort_values(by="Compound")
 
-        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str))
+        correct_answer = parse_table_multiindex(
+            pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str)).sort_values(by="Compound")
+
+        table.to_csv(sample.answerfile_name.replace(".csv", "_output.csv"))
 
         for field in sample.compare_fields:
             if type(field) == tuple:

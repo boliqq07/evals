@@ -1,18 +1,17 @@
 scipaper_affinity:
   id: scipaper_affinity.val.ab-v1
   metrics: [accuracy]
-scipaper_affinity.val.ab-v1:
+scipaper_affinity.val.json:
   class: evals.elsuite.table_extract:TableExtract
   args:
-    dataset: /Users/chang/AI_projects/Uni-finder/assays/0003001_0004000/answer/data.jsonl
+    dataset: 00_scipaper_affinity/samples.jsonl
     instructions: |
-      Please summarize the names, SMILES, affinities, target info (protein or cell line), and affinity types (chosen from IC50, EC50, TC50, GI50, Ki, Kd) of all inhibitors in the paper, and output in json format. For example:
+      Please give a complete list of names, affinities, target info (protein or cell line), and affinity types (chosen from IC50, EC50, TC50, GI50, Ki, Kd) of all inhibitors in the paper. If there are multiple tables, combine them. Don't give me reference. Output in json format. For example:
       ```json
       [
           {
               "Compound": "5a",
-              "Name": "d4a",
-              "SMILES": "Unknown",
+              "Name": "Aspirin",
               "Affinities": {
                   "5HT1A (IC50)": "2.0 nM",
                   "5HT1D (IC50)": "8.0 nM",
@@ -22,3 +21,18 @@ scipaper_affinity.val.ab-v1:
           }
       ]
       ```
+
+scipaper_affinity.val.csv:
+  class: evals.elsuite.table_extract:TableExtract
+  args:
+    dataset: 00_scipaper_affinity/samples.jsonl
+    instructions: |
+      Please give a complete list of affinities, target info (protein or cell line), and affinity types (chosen from IC50, EC50, TC50, GI50, Ki, Kd) of all inhibitors in the paper. 
+      1. Find all the tables with relevant information
+      2. Output in csv format with multiindex (Affinities, protein/cell line), write units not in header but in the value like "10.5 µM". Quote the value if it has comma! For example:
+      ```csv
+      Compound,Name,Affinities,Affinities,Affinities,Affinities
+      ,,5HT1A (IC50),5HT1D (IC50),5HT-UT (IC50),5HT1E (<affinity type>)
+      "5a","1,2-dimethyl Aspirin",2.0 nM,8.0 nM,12.6 nM,>1000 nM
+      ```
+      3. If there are multiple tables, concat them. Don't give me reference or using "...", give me complete table!

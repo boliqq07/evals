@@ -1,0 +1,9 @@
+uni_finder/gpt-3.5-turbo:
+  class: evals.completion_fns.uni_finder:UniFinderCompletionFn
+  args:
+    model: gpt35
+
+uni_finder/gpt-4-all:
+  class: evals.completion_fns.uni_finder:UniFinderCompletionFn
+  args:
+    model: gpt4
