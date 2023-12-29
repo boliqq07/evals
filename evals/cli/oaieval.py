@@ -2,9 +2,12 @@
 This file defines the `oaieval` CLI for running evals.
 """
 import argparse
+import json
 import logging
+import re
 import shlex
 import sys
+from pathlib import Path
 from typing import Any, Mapping, Optional, Union, cast
 
 import openai
@@ -48,6 +51,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log_to_file", type=str, default=None, help="Log to a file instead of stdout"
     )
+    parser.add_argument("--mlops", type=str, default=None)
     parser.add_argument(
         "--registry_path",
         type=str,
@@ -106,6 +110,7 @@ class OaiEvalArguments(argparse.Namespace):
     user: str
     record_path: Optional[str]
     log_to_file: Optional[str]
+    mlops: Optional[str]
     registry_path: list[str]
     debug: bool
     local_run: bool
@@ -229,6 +234,29 @@ def run(args: OaiEvalArguments, registry: Optional[Registry] = None) -> str:
     logger.info("Final report:")
     for key, value in result.items():
         logger.info(f"{key}: {value}")
+
+    if args.mlops:
+        import pandas as pd
+        with open(record_path, "r") as f:
+            events_df = pd.read_json(f, lines=True)
+
+        run_config = events_df.loc[0, "spec"]
+        matches_df = events_df[events_df.type == "match"].reset_index(drop=True)
+        matches_df = matches_df.join(pd.json_normalize(matches_df.data))
+
+        matches_df["doi"] = [re.sub("__([0-9]+)__", "(\1)", Path(f).stem).replace("_", "/") for f in matches_df["file_name"]]
+
+        # TODO: compare on different completion_functions
+        accuracy_by_type_and_file = matches_df.groupby(["jobtype", "doi"])['correct'].mean()
+        accuracy_by_type = matches_df.groupby(["jobtype"])['correct'].mean()
+
+        logger_data = {}
+
+        config_logger = json.load(open(args.mlops, 'r'))
+        if "dp_mlops" in config_logger:
+            from evals.reporters.DPTracking import DPTrackingReporter
+            DPTrackingReporter.report_run(config_logger, run_config, logger_data, step=0)
+
     return run_spec.run_id
 
 

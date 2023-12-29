@@ -120,7 +120,7 @@ def fuzzy_compare(a: str, b: str) -> bool:
         """
         mark = "" if re.search(r"[><=]", s) is None else re.search(r"[><=]", s).group()
         unit = s.rstrip()[-2:]
-        number = re.search(r"[0-9.\+\-]+", s).group()
+        number = float(re.search(r"[0-9.\+\-]+", s).group())
 
         if unit in ["µM", "uM"]:
             unit = "nM"
@@ -148,28 +148,30 @@ def fuzzy_compare(a: str, b: str) -> bool:
 
 
 def fuzzy_normalize(s):
-    """ 标准化字符串 """
-    # 定义需要移除的单位和符号
-    units = ["µM", "µg/mL", "nM"]
-    for unit in units:
-        s = s.replace(unit, "")
+    if s.startswith("Unnamed"):
+        return ""
+    else:
+        """ 标准化字符串 """
+        # 定义需要移除的单位和符号
+        units = ["µM", "µg/mL", "nM"]
+        for unit in units:
+            s = s.replace(unit, "")
 
-    # 定义特定关键字
-    keywords = ["IC50", "EC50", "TC50", "GI50", "Ki", "Kd"]
+        # 定义特定关键字
+        keywords = ["IC50", "EC50", "TC50", "GI50", "Ki", "Kd"]
 
-    # 移除非字母数字的字符，除了空格
-    s = re.sub(r'[^\w\s]', '', s)
+        # 移除非字母数字的字符，除了空格
+        s = re.sub(r'[^\w\s]', '', s)
 
-    # 分割字符串为单词列表
-    words = s.split()
+        # 分割字符串为单词列表
+        words = s.split()
 
-    # 将关键字移到末尾
-    reordered_words = [word for word in words if word not in keywords]
-    keywords_in_string = [word for word in words if word in keywords]
-    reordered_words.extend(keywords_in_string)
-
-    # 重新组合为字符串
-    return ' '.join(reordered_words)
+        # 将关键字移到末尾
+        reordered_words = [word for word in words if word not in keywords]
+        keywords_in_string = [word for word in words if word in keywords]
+        reordered_words.extend(keywords_in_string)
+        # 重新组合为字符串
+        return ' '.join(reordered_words)
 
 
 class TableExtract(evals.Eval):
@@ -202,30 +204,43 @@ class TableExtract(evals.Eval):
         )
         sampled = result.get_completions()[0]
 
-        if "csv" in prompt:
-            code = re.search(code_pattern, sampled).group()
-            code_content = re.sub(code_pattern, r"\1", code)
-            table = pd.read_csv(StringIO(code_content))
-            if pd.isna(table.iloc[0, 0]):
-                table = pd.read_csv(StringIO(code_content), header=[0, 1])
+        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str))
+        correct_answer = correct_answer.sort_values(by=("Compound", ""))
+        correct_str = correct_answer.to_csv()
 
-        elif "json" in prompt:
-            code = re.search(code_pattern, sampled).group()
-            code_content = re.sub(code_pattern, r"\1", code).replace("\"", "")
-            table = pd.DataFrame(json.loads(code_content))
-        else:
-            table = pd.DataFrame()
-        table = parse_table_multiindex(table).sort_values(by="Compound")
+        try:
+            if "csv" in prompt:
+                code = re.search(code_pattern, sampled).group()
+                code_content = re.sub(code_pattern, r"\1", code)
+                table = pd.read_csv(StringIO(code_content))
+                if pd.isna(table.iloc[0, 0]):
+                    table = pd.read_csv(StringIO(code_content), header=[0, 1])
 
-        correct_answer = parse_table_multiindex(
-            pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str)).sort_values(by="Compound")
+            elif "json" in prompt:
+                code = re.search(code_pattern, sampled).group()
+                code_content = re.sub(code_pattern, r"\1", code).replace("\"", "")
+                table = pd.DataFrame(json.loads(code_content))
+            else:
+                table = pd.DataFrame()
+            table = parse_table_multiindex(table).sort_values(by="Compound")
+        except:
+            record_match(
+                correct=False,
+                expected=correct_str,
+                picked=sampled,
+                file_name=sample.file_name,
+                jobtype="match_all"
+            )
+            return
 
         table.to_csv(sample.answerfile_name.replace(".csv", "_output.csv"))
 
+        match_all = True
         for field in sample.compare_fields:
             if type(field) == tuple:
                 field = (field[0], fuzzy_normalize(field[1]))
             match_field = field in table.columns and field in correct_answer.columns
+            match_all = match_all and match_field
             record_match(
                 correct=match_field,
                 expected=field,
@@ -235,6 +250,7 @@ class TableExtract(evals.Eval):
             )
             if match_field:
                 match_number = table[field].shape[0] == correct_answer[field].shape[0]
+                match_all = match_all and match_number
                 record_match(
                     correct=match_number,
                     expected=correct_answer[field].shape[0],
@@ -244,13 +260,22 @@ class TableExtract(evals.Eval):
                 )
 
                 for sample_value, correct_value in zip(table[field], correct_answer[field]):
+                    match_value = fuzzy_compare(str(sample_value), str(correct_value))
+                    match_all = match_all and match_value
                     record_match(
-                        correct=fuzzy_compare(sample_value, correct_value),
+                        correct=match_value,
                         expected=correct_value,
                         picked=sample_value,
                         file_name=sample.file_name,
                         jobtype="match_value"
                     )
+        record_match(
+            correct=match_all,
+            expected=correct_str,
+            picked=table.to_string(),
+            file_name=sample.file_name,
+            jobtype="match_all"
+        )
 
     def run(self, recorder: RecorderBase):
         samples = get_dataset(self.dataset)
