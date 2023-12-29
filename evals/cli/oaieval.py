@@ -4,9 +4,11 @@ This file defines the `oaieval` CLI for running evals.
 import argparse
 import json
 import logging
+import pickle
 import re
 import shlex
 import sys
+from io import StringIO
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union, cast
 
@@ -237,22 +239,41 @@ def run(args: OaiEvalArguments, registry: Optional[Registry] = None) -> str:
 
     if args.mlops:
         import pandas as pd
+        import plotly.express as px
+
+        recorder.flush_events()
         with open(record_path, "r") as f:
             events_df = pd.read_json(f, lines=True)
 
+        print(events_df)
         run_config = events_df.loc[0, "spec"]
-        matches_df = events_df[events_df.type == "match"].reset_index(drop=True)
+        matches_df = events_df[events_df["type"] == "match"].reset_index(drop=True)
         matches_df = matches_df.join(pd.json_normalize(matches_df.data))
 
         matches_df["doi"] = [re.sub("__([0-9]+)__", "(\1)", Path(f).stem).replace("_", "/") for f in matches_df["file_name"]]
 
         # TODO: compare on different completion_functions
-        accuracy_by_type_and_file = matches_df.groupby(["jobtype", "doi"])['correct'].mean()
-        accuracy_by_type = matches_df.groupby(["jobtype"])['correct'].mean()
+        accuracy_by_type_and_file = matches_df.groupby(["jobtype", "doi"])['correct'].mean().reset_index()
+        accuracy_by_type = matches_df.groupby(["jobtype"])['correct'].mean().to_dict()
 
-        logger_data = {}
+        print(accuracy_by_type_and_file)
+
+        logger_data = {
+            **accuracy_by_type,
+            "Accuracy": px.box(accuracy_by_type_and_file, x="jobtype", y="correct", color="jobtype", title="Accuracy by jobtype and model"),
+        }
+
+        for doi, df in matches_df.groupby("doi"):
+            logger_data[f"{doi.replace('/', '_')}/context:match"] = df[df["jobtype"] != "match_all"][["correct", "expected", "picked", "jobtype"]]
+            match_all_data = df[df["jobtype"] == "match_all"].iloc[0, :]
+            logger_data[f"{doi.replace('/', '_')}/context:truth"] = pd.read_csv(StringIO(match_all_data["expected"]), header=[0, 1])
+            logger_data[f"{doi.replace('/', '_')}/context:extract"] = pd.read_csv(StringIO(match_all_data["picked"]), header=[0, 1]) \
+                if df["jobtype"].iloc[0] != "match_all" else match_all_data["picked"]
+        pickle.dump(logger_data, open("logger_data.pkl", "wb"))
 
         config_logger = json.load(open(args.mlops, 'r'))
+        if "name" not in config_logger.keys():
+            config_logger["name"] = f"{run_spec.run_id}_{args.completion_fn}_{args.eval}"
         if "dp_mlops" in config_logger:
             from evals.reporters.DPTracking import DPTrackingReporter
             DPTrackingReporter.report_run(config_logger, run_config, logger_data, step=0)

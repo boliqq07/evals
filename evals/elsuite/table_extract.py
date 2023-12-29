@@ -206,7 +206,8 @@ class TableExtract(evals.Eval):
 
         correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str))
         correct_answer = correct_answer.sort_values(by=("Compound", ""))
-        correct_str = correct_answer.to_csv()
+        correct_answer.to_csv("temp.csv", index=False)
+        correct_str = open("temp.csv", 'r').read()
 
         try:
             if "csv" in prompt:
@@ -222,7 +223,7 @@ class TableExtract(evals.Eval):
                 table = pd.DataFrame(json.loads(code_content))
             else:
                 table = pd.DataFrame()
-            table = parse_table_multiindex(table).sort_values(by="Compound")
+            table = parse_table_multiindex(table).sort_values(by=("Compound", ""))
         except:
             record_match(
                 correct=False,
@@ -233,7 +234,9 @@ class TableExtract(evals.Eval):
             )
             return
 
-        table.to_csv(sample.answerfile_name.replace(".csv", "_output.csv"))
+        answerfile_out = sample.answerfile_name.replace(".csv", "_output.csv")
+        table.to_csv(answerfile_out, index=False)
+        picked_str = open(answerfile_out, 'r').read()
 
         match_all = True
         for field in sample.compare_fields:
@@ -267,12 +270,12 @@ class TableExtract(evals.Eval):
                         expected=correct_value,
                         picked=sample_value,
                         file_name=sample.file_name,
-                        jobtype="match_value"
+                        jobtype=field if type(field) == str else field[0]
                     )
         record_match(
             correct=match_all,
             expected=correct_str,
-            picked=table.to_string(),
+            picked=picked_str,
             file_name=sample.file_name,
             jobtype="match_all"
         )
