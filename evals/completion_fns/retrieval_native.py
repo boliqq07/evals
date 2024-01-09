@@ -10,19 +10,12 @@ import numpy as np
 from openai import OpenAI
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-import pandas as pd
 
 from evals.api import CompletionFn, CompletionResult
+from evals.completion_fns.openai import RetrievalCompletionResult
 from evals.prompt.base import ChatCompletionPrompt, CompletionPrompt
 from evals.record import record_sampling
-
-
-class RetrievalCompletionResult(CompletionResult):
-    def __init__(self, response: str) -> None:
-        self.response = response
-
-    def get_completions(self) -> list[str]:
-        return [self.response.strip()]
+from evals.utils.api_utils import openai_rag_completion_create_retrying
 
 
 class OpenAIRetrievalCompletionFn(CompletionFn):
@@ -56,42 +49,12 @@ class OpenAIRetrievalCompletionFn(CompletionFn):
 
         assert "file_name" in kwargs, "Must provide a file_name to retrieve."
 
-        file = client.files.create(file=open(kwargs["file_name"], "rb"), purpose='assistants')
-
-        #  Create an Assistant (Note model="gpt-3.5-turbo-1106" instead of "gpt-4-1106-preview")
-        assistant = client.beta.assistants.create(
-            name="File Assistant",
-            instructions=self.instructions,
+        answer = openai_rag_completion_create_retrying(
+            client,
             model=self.model,
-            tools=[{"type": "retrieval"}],
-            file_ids=[file.id]
+            instructions=self.instructions,
+            file_name=kwargs.get("file_name", ""),
+            prompt=CompletionPrompt(raw_prompt=prompt).to_formatted_prompt(),
         )
-
-        #  Create a Thread
-        thread = client.beta.threads.create()
-
-        # Add a Message to a Thread
-        print(prompt)
-        message = client.beta.threads.messages.create(thread_id=thread.id, role="user",
-                                                      content=prompt
-                                                      )
-
-        # Run the Assistant
-        run = client.beta.threads.runs.create(thread_id=thread.id, assistant_id=assistant.id)
-        print(run.model_dump_json(indent=4))
-
-        # If run is 'completed', get messages and print
-        while True:
-            # Retrieve the run status
-            run_status = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            time.sleep(10)
-            if run_status.status == 'completed':
-                messages = client.beta.threads.messages.list(thread_id=thread.id)
-                answer = messages.data[0].content[0].text.value
-                break
-            else:
-                ### sleep again
-                time.sleep(2)
-        print(answer)
         record_sampling(prompt=prompt, sampled=answer)
-        return RetrievalCompletionResult(answer)
+        return RetrievalCompletionResult(answer, prompt=prompt)

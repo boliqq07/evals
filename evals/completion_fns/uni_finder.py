@@ -68,8 +68,6 @@ class UniFinderCompletionFn(CompletionFn):
             pdf_id = response['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
             pdf_token.append(pdf_id)
 
-        assert "file_name" in kwargs, "Must provide a file_name to retrieve."
-
         url = f"{self.api_base}/api/external/chatpdf"
 
         payload = {
