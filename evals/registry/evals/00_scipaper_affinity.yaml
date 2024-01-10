@@ -1,5 +1,5 @@
 scipaper_affinity:
-  id: scipaper_affinity.val.ab-v1
+  id: scipaper_affinity.val.csv
   metrics: [accuracy]
 scipaper_affinity.val.json:
   class: evals.elsuite.rag_table_extract:TableExtract
