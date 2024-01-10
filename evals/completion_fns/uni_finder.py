@@ -6,16 +6,9 @@ import time
 import requests
 from typing import Any, Optional, Union
 
-import numpy as np
-from openai import OpenAI
-
-import pandas as pd
-
+from evals.prompt.base import CompletionPrompt
 from evals.api import CompletionFn, CompletionResult
 from evals.record import record_sampling
-from evals.utils.api_utils import (
-    request_with_timeout
-)
 
 
 class UniFinderCompletionResult(CompletionResult):
@@ -23,7 +16,7 @@ class UniFinderCompletionResult(CompletionResult):
         self.response = response
 
     def get_completions(self) -> list[str]:
-        return [self.response.strip()]
+        return [self.response.strip()] if self.response else ["Unknown"]
 
 
 class UniFinderCompletionFn(CompletionFn):
@@ -66,9 +59,13 @@ class UniFinderCompletionFn(CompletionFn):
             }
             response = requests.post(url, data=data, files=files).json()
             pdf_id = response['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
+            print("############# pdf_id ##############", pdf_id)
             pdf_token.append(pdf_id)
 
         url = f"{self.api_base}/api/external/chatpdf"
+
+        if type(prompt) == list:
+            prompt = CompletionPrompt(prompt).to_formatted_prompt()
 
         payload = {
             "model_engine": self.model,
@@ -78,6 +75,5 @@ class UniFinderCompletionFn(CompletionFn):
         }
         response = requests.post(url, json=payload).json()
         answer = response['answer']
-        print(answer)
         record_sampling(prompt=prompt, sampled=answer)
         return UniFinderCompletionResult(answer)

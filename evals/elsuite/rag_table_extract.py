@@ -1,13 +1,8 @@
 from io import StringIO
 import json
-import os
-from pathlib import Path
 import re
 
 from typing import List, Optional, Tuple, Union
-
-import oss2
-from oss2.credentials import EnvironmentVariableCredentialsProvider
 
 import pandas as pd
 from pydantic import BaseModel
@@ -15,6 +10,7 @@ from pydantic import BaseModel
 import evals
 import evals.metrics
 from evals.api import CompletionFn
+from evals.elsuite.rag_match import get_rag_dataset
 from evals.record import RecorderBase, record_match
 
 code_pattern = r"```[\s\S]*?\n([\s\S]+?)\n```"
@@ -51,62 +47,12 @@ def parse_table_multiindex(table: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def init_oss():
-    """
-    Initialize OSS client.
-    """
-    # Please set OSS_ACCESS_KEY_ID & OSS_ACCESS_KEY_SECRET in your environment variables.
-    auth = oss2.ProviderAuth(EnvironmentVariableCredentialsProvider())
-
-    # 设置 Endpoint
-    endpoint = 'https://oss-cn-beijing.aliyuncs.com'
-
-    # 设置 Bucket
-    bucket_name = 'dp-filetrans-bj'
-    bucket = oss2.Bucket(auth, endpoint, bucket_name)
-
-    return bucket
-
-
 class FileSample(BaseModel):
     file_name: Optional[str]
     file_link: Optional[str]
     answerfile_name: Optional[str]
     answerfile_link: Optional[str]
     compare_fields: List[Union[str, Tuple]]
-
-
-def get_dataset(data_jsonl: str) -> list[FileSample]:
-    bucket = init_oss()
-    raw_samples = evals.get_jsonl(data_jsonl)
-
-    for raw_sample in raw_samples:
-        for ftype in ["", "answer"]:
-            if f"{ftype}file_name" in raw_sample:
-                oss_file = "changjunhan/" + os.path.basename(raw_sample[f"{ftype}file_name"])
-                raw_sample[f"{ftype}file_link"] = "https://dp-filetrans-bj.oss-cn-beijing.aliyuncs.com/" + oss_file
-
-                exists = bucket.object_exists(oss_file)
-                if exists:
-                    print(f"文件 {oss_file} 已存在于 OSS 中。")
-                else:
-                    # 上传文件
-                    bucket.put_object_from_file(oss_file, raw_sample[f"{ftype}file_name"])
-                    print(f"文件 {oss_file} 已上传到 OSS。")
-            elif f"{ftype}file_link" in raw_sample:
-                local_file = raw_sample[f"{ftype}file_name"] if f"{ftype}file_name" in raw_sample else os.path.basename(
-                    raw_sample[f"{ftype}file_link"])
-                oss_file = "changjunhan/" + os.path.basename(raw_sample[f"{ftype}file_link"])
-                if not os.path.exists(local_file):
-                    if bucket.object_exists(oss_file):
-                        # 从 OSS 下载文件
-                        Path(local_file).parent.mkdir(parents=True, exist_ok=True)
-                        bucket.get_object_to_file(oss_file, local_file)
-        raw_sample["compare_fields"] = [field if type(field) == str else tuple(field) for field in
-                                        raw_sample["compare_fields"]]
-    print(raw_samples)
-    samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
-    return samples
 
 
 def fuzzy_compare(a: str, b: str) -> bool:
@@ -178,14 +124,14 @@ class TableExtract(evals.Eval):
     def __init__(
             self,
             completion_fns: list[CompletionFn],
-            dataset: str,
+            samples_jsonl: str,
             *args,
             instructions: Optional[str] = "",
             **kwargs,
     ):
         super().__init__(completion_fns, *args, **kwargs)
         assert len(completion_fns) < 3, "TableExtract only supports 3 completion fns"
-        self.dataset = dataset
+        self.samples_jsonl = samples_jsonl
         self.instructions = instructions
 
     def eval_sample(self, sample, rng):
@@ -281,7 +227,12 @@ class TableExtract(evals.Eval):
         )
 
     def run(self, recorder: RecorderBase):
-        samples = get_dataset(self.dataset)
+        raw_samples = get_rag_dataset(self._prefix_registry_path(self.samples_jsonl).as_posix())
+        for raw_sample in raw_samples:
+            raw_sample["compare_fields"] = [field if type(field) == str else tuple(field) for field in
+                                            raw_sample["compare_fields"]]
+
+        samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
         self.eval_all_samples(recorder, samples)
         return {
             "accuracy": evals.metrics.get_accuracy(recorder.get_events("match")),

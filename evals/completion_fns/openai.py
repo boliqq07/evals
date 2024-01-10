@@ -154,7 +154,7 @@ class OpenAIChatCompletionFn(CompletionFnSpec):
             )
             result = OpenAIChatCompletionResult(raw_data=result, prompt=openai_create_prompt)
         else:
-            chatmodel_to_apimodel = lambda x: "gpt-3.5-turbo-1106" if x.startswith("gpt-3.5-turbo-") else "gpt-4-1106-preview" if x.startswith("gpt-4-") else ""
+            chatmodel_to_apimodel = lambda x: "gpt-3.5-turbo-1106" if x.startswith("gpt-3.5-turbo") else "gpt-4-1106-preview" if x.startswith("gpt-4") else ""
             answer = openai_rag_completion_create_retrying(
                 OpenAI(api_key=self.api_key, base_url=self.api_base),
                 model=chatmodel_to_apimodel(self.model),
