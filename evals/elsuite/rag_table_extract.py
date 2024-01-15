@@ -186,7 +186,7 @@ class TableExtract(evals.Eval):
 
         match_all = True
         for field in sample.compare_fields:
-            if type(field) == tuple:
+            if type(field) == tuple and len(field) > 1:
                 field = (field[0], fuzzy_normalize(field[1]))
             match_field = field in table.columns and field in correct_answer.columns
             match_all = match_all and match_field

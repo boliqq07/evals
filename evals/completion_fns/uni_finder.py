@@ -1,8 +1,11 @@
 """
 Extending Completion Functions with Embeddings-based retrieval from a fetched dataset
 """
+import json
 import os
 import time
+from pathlib import Path
+
 import requests
 from typing import Any, Optional, Union
 
@@ -31,6 +34,7 @@ class UniFinderCompletionFn(CompletionFn):
             api_base: Optional[str] = None,
             api_key: Optional[str] = None,
             n_ctx: Optional[int] = None,
+            cache_dir: Optional[str] = "~/.uni_finder/knowledge_base.json",
             extra_options: Optional[dict] = {},
             **kwargs
     ):
@@ -40,6 +44,10 @@ class UniFinderCompletionFn(CompletionFn):
         self.api_key = api_key or os.environ.get("UNIFINDER_API_KEY")
         self.n_ctx = n_ctx
         self.extra_options = extra_options
+        self.cache_dir = cache_dir
+        Path(self.cache_dir).parent.mkdir(parents=True, exist_ok=True)
+        if not Path(self.cache_dir).exists():
+            json.dump({}, open(self.cache_dir, "w"))
 
     def __call__(self, prompt: Union[str, list[dict]], **kwargs: Any) -> UniFinderCompletionResult:
         """
@@ -50,15 +58,23 @@ class UniFinderCompletionFn(CompletionFn):
 
         pdf_token = []
         if "file_name" in kwargs:
-            url = f"{self.api_base}/api/external/upload_pdf"
-            pdf_parse_mode = 'fast'  # or 'precise', 指定使用的pdf解析版本
-            files = {'file': open(kwargs["file_name"], 'rb')}
-            data = {
-                'pdf_parse_mode': pdf_parse_mode,
-                'api_key': self.api_key
-            }
-            response = requests.post(url, data=data, files=files).json()
-            pdf_id = response['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
+            cache = json.load(open(self.cache_dir, 'r+'))
+
+            if kwargs["file_name"] not in cache:
+                url = f"{self.api_base}/api/external/upload_pdf"
+                pdf_parse_mode = 'fast'  # or 'precise', 指定使用的pdf解析版本
+                files = {'file': open(kwargs["file_name"], 'rb')}
+                data = {
+                    'pdf_parse_mode': pdf_parse_mode,
+                    'api_key': self.api_key
+                }
+                response = requests.post(url, data=data, files=files).json()
+                pdf_id = response['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
+
+                cache[kwargs["file_name"]] = pdf_id
+                json.dump(cache, open(self.cache_dir, "w"))
+            else:
+                pdf_id = cache[kwargs["file_name"]]
             print("############# pdf_id ##############", pdf_id)
             pdf_token.append(pdf_id)
 
