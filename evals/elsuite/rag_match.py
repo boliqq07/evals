@@ -47,15 +47,16 @@ def get_rag_dataset(samples_jsonl: str) -> list[dict]:
                     # 上传文件
                     bucket.put_object_from_file(oss_file, raw_sample[f"{ftype}file_name"])
                     print(f"文件 {oss_file} 已上传到 OSS。")
-            elif f"{ftype}file_link" in raw_sample:
-                local_file = raw_sample[f"{ftype}file_name"] if f"{ftype}file_name" in raw_sample else os.path.basename(
-                    raw_sample[f"{ftype}file_link"])
+            if f"{ftype}file_link" in raw_sample:
+                local_file = raw_sample[f"{ftype}file_name"] if f"{ftype}file_name" in raw_sample else \
+                    os.path.basename(raw_sample[f"{ftype}file_link"])
                 oss_file = "changjunhan/" + os.path.basename(raw_sample[f"{ftype}file_link"])
                 if not os.path.exists(local_file):
                     if bucket.object_exists(oss_file):
                         # 从 OSS 下载文件
                         Path(local_file).parent.mkdir(parents=True, exist_ok=True)
                         bucket.get_object_to_file(oss_file, local_file)
+                        print(f"文件 {oss_file} 已下载到本地。")
     return raw_samples
 
 

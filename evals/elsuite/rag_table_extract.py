@@ -53,6 +53,7 @@ class FileSample(BaseModel):
     answerfile_name: Optional[str]
     answerfile_link: Optional[str]
     compare_fields: List[Union[str, Tuple]]
+    index: Union[str, Tuple] = ("Compound", "")
 
 
 def fuzzy_compare(a: str, b: str) -> bool:
@@ -66,7 +67,7 @@ def fuzzy_compare(a: str, b: str) -> bool:
         """
         mark = "" if re.search(r"[><=]", s) is None else re.search(r"[><=]", s).group()
         unit = s.rstrip()[-2:]
-        number = float(re.search(r"[0-9.\+\-]+", s).group())
+        number = float(re.search(r"[\+\-]*[0-9.]+", s).group())
 
         if unit in ["µM", "uM"]:
             unit = "nM"
@@ -150,8 +151,10 @@ class TableExtract(evals.Eval):
         )
         sampled = result.get_completions()[0]
 
-        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=[0, 1]).astype(str))
-        correct_answer = correct_answer.sort_values(by=("Compound", ""))
+        compare_fields_types = [type(x) for x in sample.compare_fields]
+        header_rows = [0, 1] if tuple in compare_fields_types else [0]
+
+        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=header_rows).astype(str))
         correct_answer.to_csv("temp.csv", index=False)
         correct_str = open("temp.csv", 'r').read()
 
@@ -161,7 +164,7 @@ class TableExtract(evals.Eval):
                 code_content = re.sub(code_pattern, r"\1", code)
                 table = pd.read_csv(StringIO(code_content))
                 if pd.isna(table.iloc[0, 0]):
-                    table = pd.read_csv(StringIO(code_content), header=[0, 1])
+                    table = pd.read_csv(StringIO(code_content), header=header_rows)
 
             elif "json" in prompt:
                 code = re.search(code_pattern, sampled).group()
@@ -169,7 +172,7 @@ class TableExtract(evals.Eval):
                 table = pd.DataFrame(json.loads(code_content))
             else:
                 table = pd.DataFrame()
-            table = parse_table_multiindex(table).sort_values(by=("Compound", ""))
+            table = parse_table_multiindex(table)
         except:
             record_match(
                 correct=False,
@@ -184,10 +187,17 @@ class TableExtract(evals.Eval):
         table.to_csv(answerfile_out, index=False)
         picked_str = open(answerfile_out, 'r').read()
 
+        comparison_df = pd.merge(table.set_index(sample.index, drop=False),
+                                 correct_answer.set_index(sample.index, drop=False),
+                                 how="right", left_index=True, right_index=True)
+
         match_all = True
         for field in sample.compare_fields:
             if type(field) == tuple and len(field) > 1:
                 field = (field[0], fuzzy_normalize(field[1]))
+                field_sample, field_correct = (f"{field[0]}_x", field[1]), (f"{field[0]}_y", field[1])
+            else:
+                field_sample, field_correct = f"{field}_x", f"{field}_y"
             match_field = field in table.columns and field in correct_answer.columns
             match_all = match_all and match_field
             record_match(
@@ -208,7 +218,7 @@ class TableExtract(evals.Eval):
                     jobtype="match_number"
                 )
 
-                for sample_value, correct_value in zip(table[field], correct_answer[field]):
+                for sample_value, correct_value in zip(comparison_df[field_sample], comparison_df[field_correct]):
                     match_value = fuzzy_compare(str(sample_value), str(correct_value))
                     match_all = match_all and match_value
                     record_match(

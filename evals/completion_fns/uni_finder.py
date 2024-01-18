@@ -89,7 +89,11 @@ class UniFinderCompletionFn(CompletionFn):
             "query": prompt,
             'api_key': self.api_key
         }
-        response = requests.post(url, json=payload).json()
-        answer = response['answer']
+        response = requests.post(url, json=payload)
+        try:
+            answer = response.json()['answer']
+        except:
+            print(response.text)
+            answer = response.text
         record_sampling(prompt=prompt, sampled=answer)
         return UniFinderCompletionResult(answer)
