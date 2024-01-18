@@ -1,6 +1,8 @@
+import traceback
 from io import StringIO
 import json
 import re
+from pathlib import Path
 
 from typing import List, Optional, Tuple, Union
 
@@ -16,6 +18,17 @@ from evals.record import RecorderBase, record_match
 code_pattern = r"```[\s\S]*?\n([\s\S]+?)\n```"
 json_pattern = r"```json[\s\S]*?\n([\s\S]+?)\n```"
 csv_pattern = r"```csv[\s\S]*?\n([\s\S]+?)\n```"
+
+
+def parse_csv_text(csvtext: str) -> str:
+    lines = csvtext.strip().split("\n")
+    tuple_pattern = r"\((\"[\s\S]*?\"),(\"[\s\S]*?\")\)"
+    if re.search(tuple_pattern, lines[0]) is not None:
+        lines[0] = re.sub(tuple_pattern, r"(\1|\2)", lines[0])
+    lines_clr = [re.sub(r"\"[\s\S]*?\"", "", line) for line in lines]
+    max_commas = max([line_clr.count(",") for line_clr in lines_clr])
+    unified_lines = [line + ("," * (max_commas - line_clr.count(","))) for line, line_clr in zip(lines, lines_clr)]
+    return "\n".join(unified_lines)
 
 
 def parse_table_multiindex(table: pd.DataFrame) -> pd.DataFrame:
@@ -39,7 +52,8 @@ def parse_table_multiindex(table: pd.DataFrame) -> pd.DataFrame:
                 d = pd.DataFrame(df.pop(col).tolist())
                 d.columns = pd.MultiIndex.from_tuples([(col, fuzzy_normalize(key)) for key in d.columns])
                 dfs.append(d)
-        df.columns = pd.MultiIndex.from_tuples([(col, "") for col in df.columns])
+        df.columns = pd.MultiIndex.from_tuples([eval(col.replace("|", ",")) if (col[0] == "(" and col[-1] == ")") else
+                                                (col, "") for col in df.columns])
         df = pd.concat([df] + dfs, axis=1)
     if df.columns.nlevels > 1:
         df.columns = pd.MultiIndex.from_tuples([(col, fuzzy_normalize(subcol)) for col, subcol in df.columns])
@@ -80,7 +94,7 @@ def fuzzy_compare(a: str, b: str) -> bool:
             mark = ""
         return f"{mark}{number:.1f} {unit}"
 
-    unit_str = ["nM", "uM", "µM", "mM", "%", " %"]
+    unit_str = ["nM", "uM", "µM", "mM", "M", "%", " %"]
     nan_str = ["n/a", "nan", "na", "nd", "not determined", "not tested"]
     a = a.strip()
     b = b.strip()
@@ -91,7 +105,8 @@ def fuzzy_compare(a: str, b: str) -> bool:
     elif a.lower() in nan_str and b.lower() in nan_str:
         return True
     else:
-        return (a.lower() in b.lower()) or (b.lower() in a.lower())
+        import Levenshtein
+        return (a.lower() in b.lower()) or (b.lower() in a.lower()) or Levenshtein.distance(a.lower(), b.lower()) / (len(a) + len(b)) < 0.1
 
 
 def fuzzy_normalize(s):
@@ -100,12 +115,12 @@ def fuzzy_normalize(s):
     else:
         """ 标准化字符串 """
         # 定义需要移除的单位和符号
-        units = ["µM", "µg/mL", "nM"]
+        units = ["µM", "µg/mL", "nM", "M"]
         for unit in units:
             s = s.replace(unit, "")
 
         # 定义特定关键字
-        keywords = ["IC50", "EC50", "TC50", "GI50", "Ki", "Kd"]
+        keywords = ["pIC50", "IC50", "EC50", "TC50", "GI50", "Ki", "Kd", "Kb", "pKb"]
 
         # 移除非字母数字的字符，除了空格
         s = re.sub(r'[^\w\s]', '', s)
@@ -162,9 +177,11 @@ class TableExtract(evals.Eval):
             if "csv" in prompt:
                 code = re.search(code_pattern, sampled).group()
                 code_content = re.sub(code_pattern, r"\1", code)
-                table = pd.read_csv(StringIO(code_content))
+                code_content_processed = parse_csv_text(code_content)
+                # table = pd.read_csv(StringIO(code_content_processed), header=header_rows)
+                table = pd.read_csv(StringIO(code_content_processed))
                 if pd.isna(table.iloc[0, 0]):
-                    table = pd.read_csv(StringIO(code_content), header=header_rows)
+                    table = pd.read_csv(StringIO(code_content_processed), header=header_rows)
 
             elif "json" in prompt:
                 code = re.search(code_pattern, sampled).group()
@@ -173,7 +190,24 @@ class TableExtract(evals.Eval):
             else:
                 table = pd.DataFrame()
             table = parse_table_multiindex(table)
+
+            if sample.index not in table.columns:
+                table.columns = [sample.index] + list(table.columns)[1:]
+            answerfile_out = sample.answerfile_name.replace(".csv", "_output.csv")
+            table.to_csv(answerfile_out, index=False)
+            picked_str = open(answerfile_out, 'r').read()
+
+            comparison_df = pd.merge(table.set_index(sample.index, drop=False),
+                                     correct_answer.set_index(sample.index, drop=False),
+                                     how="right", left_index=True, right_index=True)
         except:
+            print(Path(sample.file_name).stem)
+            code = re.search(code_pattern, sampled).group()
+            code_content = re.sub(code_pattern, r"\1", code)
+            code_content_processed = parse_csv_text(code_content)
+            print(code_content)
+            print(code_content_processed)
+            traceback.print_exc()
             record_match(
                 correct=False,
                 expected=correct_str,
@@ -182,14 +216,6 @@ class TableExtract(evals.Eval):
                 jobtype="match_all"
             )
             return
-
-        answerfile_out = sample.answerfile_name.replace(".csv", "_output.csv")
-        table.to_csv(answerfile_out, index=False)
-        picked_str = open(answerfile_out, 'r').read()
-
-        comparison_df = pd.merge(table.set_index(sample.index, drop=False),
-                                 correct_answer.set_index(sample.index, drop=False),
-                                 how="right", left_index=True, right_index=True)
 
         match_all = True
         for field in sample.compare_fields:

@@ -34,7 +34,7 @@ class UniFinderCompletionFn(CompletionFn):
             api_base: Optional[str] = None,
             api_key: Optional[str] = None,
             n_ctx: Optional[int] = None,
-            cache_dir: Optional[str] = "~/.uni_finder/knowledge_base.json",
+            cache_dir: Optional[str] = str(Path.home() / ".uni_finder/knowledge_base.json"),
             extra_options: Optional[dict] = {},
             **kwargs
     ):
