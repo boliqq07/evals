@@ -35,6 +35,7 @@ class UniFinderCompletionFn(CompletionFn):
             api_key: Optional[str] = None,
             n_ctx: Optional[int] = None,
             cache_dir: Optional[str] = str(Path.home() / ".uni_finder/knowledge_base.json"),
+            pdf_parse_mode: Optional[str] = 'fast',  # or 'precise', 指定使用的pdf解析版本
             extra_options: Optional[dict] = {},
             **kwargs
     ):
@@ -45,6 +46,7 @@ class UniFinderCompletionFn(CompletionFn):
         self.n_ctx = n_ctx
         self.extra_options = extra_options
         self.cache_dir = cache_dir
+        self.pdf_parse_mode = pdf_parse_mode
         Path(self.cache_dir).parent.mkdir(parents=True, exist_ok=True)
         if not Path(self.cache_dir).exists():
             json.dump({}, open(self.cache_dir, "w"))
@@ -60,21 +62,24 @@ class UniFinderCompletionFn(CompletionFn):
         if "file_name" in kwargs:
             cache = json.load(open(self.cache_dir, 'r+'))
 
-            if kwargs["file_name"] not in cache:
+            if cache.get(kwargs["file_name"], {}).get(self.pdf_parse_mode, None) is None:
                 url = f"{self.api_base}/api/external/upload_pdf"
-                pdf_parse_mode = 'fast'  # or 'precise', 指定使用的pdf解析版本
                 files = {'file': open(kwargs["file_name"], 'rb')}
                 data = {
-                    'pdf_parse_mode': pdf_parse_mode,
+                    'pdf_parse_mode': self.pdf_parse_mode,
                     'api_key': self.api_key
                 }
-                response = requests.post(url, data=data, files=files).json()
-                pdf_id = response['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
+                response = requests.post(url, data=data, files=files)
+                print(response.text)
+                pdf_id = response.json()['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
 
-                cache[kwargs["file_name"]] = pdf_id
+                if kwargs["file_name"] not in cache:
+                    cache[kwargs["file_name"]] = {self.pdf_parse_mode: pdf_id}
+                else:
+                    cache[kwargs["file_name"]][self.pdf_parse_mode] = pdf_id
                 json.dump(cache, open(self.cache_dir, "w"))
             else:
-                pdf_id = cache[kwargs["file_name"]]
+                pdf_id = cache[kwargs["file_name"]][self.pdf_parse_mode]
             print("############# pdf_id ##############", pdf_id)
             pdf_token.append(pdf_id)
 
