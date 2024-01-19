@@ -89,7 +89,7 @@ class UniFinderCompletionFn(CompletionFn):
             "query": prompt,
             'api_key': self.api_key
         }
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=1200)
         try:
             answer = response.json()['answer']
         except:

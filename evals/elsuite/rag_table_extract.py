@@ -70,7 +70,7 @@ class FileSample(BaseModel):
     index: Union[str, Tuple] = ("Compound", "")
 
 
-def fuzzy_compare(a: str, b: str) -> bool:
+def fuzzy_compare(a: str, b: str) -> Union[bool, float]:
     """
     Compare two strings with fuzzy matching.
     """
@@ -104,9 +104,11 @@ def fuzzy_compare(a: str, b: str) -> bool:
         return a == b
     elif a.lower() in nan_str and b.lower() in nan_str:
         return True
+    elif (a.lower() in b.lower()) or (b.lower() in a.lower()):
+        return True
     else:
         import Levenshtein
-        return (a.lower() in b.lower()) or (b.lower() in a.lower()) or Levenshtein.distance(a.lower(), b.lower()) / (len(a) + len(b)) < 0.1
+        return Levenshtein.distance(a.lower(), b.lower()) / (len(a) + len(b)) < 0.1
 
 
 def fuzzy_normalize(s):
@@ -196,10 +198,6 @@ class TableExtract(evals.Eval):
             answerfile_out = sample.answerfile_name.replace(".csv", "_output.csv")
             table.to_csv(answerfile_out, index=False)
             picked_str = open(answerfile_out, 'r').read()
-
-            comparison_df = pd.merge(table.set_index(sample.index, drop=False),
-                                     correct_answer.set_index(sample.index, drop=False),
-                                     how="right", left_index=True, right_index=True)
         except:
             print(Path(sample.file_name).stem)
             code = re.search(code_pattern, sampled).group()
@@ -217,10 +215,29 @@ class TableExtract(evals.Eval):
             )
             return
 
+        renames = {}
+        for field in sample.compare_fields:
+            for i, sample_field in enumerate(table.columns):
+                field_query = field if type(field) != tuple else field[0] if field[1] == "" else field[1]
+                sample_field_query = sample_field if type(sample_field) != tuple else sample_field[0] if sample_field[1] == "" else sample_field[1]
+                if fuzzy_normalize(field_query) == "" or fuzzy_normalize(sample_field_query) == "":
+                    continue
+                if fuzzy_compare(fuzzy_normalize(field_query), fuzzy_normalize(sample_field_query)) and \
+                        fuzzy_normalize(field_query).split()[-1] == fuzzy_normalize(sample_field_query).split()[-1]:
+                    if sample_field not in renames and sample_field_query != field_query:
+                        renames[sample_field_query] = field_query
+                        break
+        if len(renames) > 0:
+            print("Find similar fields between answer and correct:", renames)
+            table.rename(columns=renames, inplace=True)
+
+        comparison_df = pd.merge(table.set_index(sample.index, drop=False),
+                                 correct_answer.set_index(sample.index, drop=False),
+                                 how="right", left_index=True, right_index=True)
+
         match_all = True
         for field in sample.compare_fields:
             if type(field) == tuple and len(field) > 1:
-                field = (field[0], fuzzy_normalize(field[1]))
                 field_sample, field_correct = (f"{field[0]}_x", field[1]), (f"{field[0]}_y", field[1])
             else:
                 field_sample, field_correct = f"{field}_x", f"{field}_y"
