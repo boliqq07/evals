@@ -95,7 +95,7 @@ def fuzzy_compare(a: str, b: str) -> Union[bool, float]:
         return f"{mark}{number:.1f} {unit}"
 
     unit_str = ["nM", "uM", "µM", "mM", "M", "%", " %"]
-    nan_str = ["n/a", "nan", "na", "nd", "not determined", "not tested"]
+    nan_str = ["n/a", "nan", "na", "n.a.", "nd", "not determined", "not tested", "inactive"]
     a = a.strip()
     b = b.strip()
     if (a[-2:] in unit_str or a[-1] in unit_str) and (b[-2:] in unit_str or b[-1] in unit_str):
@@ -117,7 +117,7 @@ def fuzzy_normalize(s):
     else:
         """ 标准化字符串 """
         # 定义需要移除的单位和符号
-        units = ["µM", "µg/mL", "nM", "M"]
+        units = ["µM", "µg/mL", "nM"]
         for unit in units:
             s = s.replace(unit, "")
 
@@ -125,7 +125,7 @@ def fuzzy_normalize(s):
         keywords = ["pIC50", "IC50", "EC50", "TC50", "GI50", "Ki", "Kd", "Kb", "pKb"]
 
         # 移除非字母数字的字符，除了空格
-        s = re.sub(r'[^\w\s]', '', s)
+        # s = re.sub(r'[^\w\s]', '', s)
 
         # 分割字符串为单词列表
         words = s.split()
@@ -215,6 +215,7 @@ class TableExtract(evals.Eval):
             )
             return
 
+        # TODO: Use similarity and Bipartite matching to match fields
         renames = {}
         for field in sample.compare_fields:
             for i, sample_field in enumerate(table.columns):
@@ -224,13 +225,17 @@ class TableExtract(evals.Eval):
                     continue
                 if fuzzy_compare(fuzzy_normalize(field_query), fuzzy_normalize(sample_field_query)) and \
                         fuzzy_normalize(field_query).split()[-1] == fuzzy_normalize(sample_field_query).split()[-1]:
-                    if sample_field not in renames and sample_field_query != field_query:
+                    if sample_field not in renames.keys() and field_query not in renames.values():
                         renames[sample_field_query] = field_query
                         break
+        renames = {key: value for key, value in renames.items() if key not in ["Compound", "Name", "SMILES"]}
         if len(renames) > 0:
             print("Find similar fields between answer and correct:", renames)
             table.rename(columns=renames, inplace=True)
+            print(table)
 
+        table[sample.index] = table[sample.index].astype(str)
+        correct_answer[sample.index] = correct_answer[sample.index].astype(str)
         comparison_df = pd.merge(table.set_index(sample.index, drop=False),
                                  correct_answer.set_index(sample.index, drop=False),
                                  how="right", left_index=True, right_index=True)
