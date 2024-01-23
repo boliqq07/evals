@@ -47,7 +47,7 @@ class ZhishuCompletionResult(BaseCompletionResult):
         if self.raw_data:
             for choice in self.raw_data.choices:
                 if choice.message.content is not None:
-                    completions.append(choice.text)
+                    completions.append(choice.message.content)
         return completions
 
 
@@ -86,12 +86,16 @@ class ZhishuCompletionFn(CompletionFn):
         headers = {
             "content-type": "application/json"
         }
+
+        messages = [
+            {"role": "system", "content": self.instructions},
+            {"role": "user", "content": f"{kwargs['file_link']} {prompt}"}
+        ] if "file_link" in kwargs else prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
+
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": self.instructions},
-                {"role": "user", "content": f"{kwargs['file_link']} {prompt}"}
-            ]
+            "token": self.api_key or os.environ['ZHISHU_API_KEY'],
+            "messages": messages
         }
 
         result = request_with_timeout(requests.post, url, json=payload, headers=headers)
