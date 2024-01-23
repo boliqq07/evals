@@ -1,11 +1,7 @@
 chemistry:
   evals:
-    - scipaper_affinity
-    - scipaper_tag2mol
-    - scipaper_hasmol
-    - markush2mol
-    - scipaper_targets
     - abstract2title
     - research-question-extraction
     - balance-chemical-equation
-    - medmcqa
+    - mmlu-college-chemistry
+    - mmlu-high-school-chemistry
