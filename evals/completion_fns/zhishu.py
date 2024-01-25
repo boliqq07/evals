@@ -59,6 +59,7 @@ class ZhishuCompletionFn(CompletionFn):
             api_base: Optional[str] = None,
             api_key: Optional[str] = None,
             n_ctx: Optional[int] = None,
+            all_tools: Optional[bool] = False,
             extra_options: Optional[dict] = {},
             **kwargs,
     ):
@@ -67,6 +68,7 @@ class ZhishuCompletionFn(CompletionFn):
         self.api_base = api_base
         self.api_key = api_key
         self.n_ctx = n_ctx
+        self.all_tools = all_tools
         self.extra_options = extra_options
 
     def __call__(
@@ -87,19 +89,21 @@ class ZhishuCompletionFn(CompletionFn):
             "content-type": "application/json"
         }
 
-        messages = [
-            {"role": "system", "content": self.instructions},
+        basic_message = [{"role": "system", "content": self.instructions}] if self.all_tools else []
+
+        messages = basic_message + [
             {"role": "user", "content": f"{kwargs['file_link']} {prompt}"}
         ] if "file_link" in kwargs else prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
 
         payload = {
             "model": self.model,
-            "token": self.api_key or os.environ['ZHISHU_API_KEY'],
             "messages": messages
         }
 
-        result = request_with_timeout(requests.post, url, json=payload, headers=headers)
+        # result = request_with_timeout(requests.post, url, json=payload, headers=headers)
+        result = requests.post(url, json=payload, headers=headers)
 
         result = ZhishuCompletionResult(raw_data=result.json(), prompt=prompt)
+        print(result.get_completions()[0].replace("\\n", "\n"))
         record_sampling(prompt=result.prompt, sampled=result.get_completions())
         return result

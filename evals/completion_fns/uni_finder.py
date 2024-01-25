@@ -70,7 +70,6 @@ class UniFinderCompletionFn(CompletionFn):
                     'api_key': self.api_key
                 }
                 response = requests.post(url, data=data, files=files)
-                print(response.text)
                 pdf_id = response.json()['pdf_token']  # 获得pdf的id，表示上传成功，后续可以使用这个id来指定pdf
 
                 if kwargs["file_name"] not in cache:

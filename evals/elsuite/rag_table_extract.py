@@ -1,3 +1,4 @@
+import os
 import traceback
 from io import StringIO
 import json
@@ -8,6 +9,7 @@ from typing import List, Optional, Tuple, Union
 
 import pandas as pd
 from pydantic import BaseModel
+import uuid
 
 import evals
 import evals.metrics
@@ -15,9 +17,11 @@ from evals.api import CompletionFn
 from evals.elsuite.rag_match import get_rag_dataset
 from evals.record import RecorderBase, record_match
 
+
 code_pattern = r"```[\s\S]*?\n([\s\S]+?)\n```"
 json_pattern = r"```json[\s\S]*?\n([\s\S]+?)\n```"
 csv_pattern = r"```csv[\s\S]*?\n([\s\S]+?)\n```"
+outlink_pattern = r"\[Download[a-zA-Z0-9 ]+?\]\((https://[a-zA-Z0-9_. /]+?)\)"
 
 
 def parse_csv_text(csvtext: str) -> str:
@@ -155,10 +159,9 @@ class TableExtract(evals.Eval):
     def eval_sample(self, sample, rng):
         assert isinstance(sample, FileSample)
 
-        prompt = (
+        prompt = \
                 self.instructions
-                + f"\nThe fields should at least contain {sample.compare_fields}"
-        )
+                # + f"\nThe fields should at least contain {sample.compare_fields}"
         result = self.completion_fn(
             prompt=prompt,
             temperature=0.0,
@@ -176,9 +179,18 @@ class TableExtract(evals.Eval):
         correct_str = open("temp.csv", 'r').read()
 
         try:
-            if "csv" in prompt:
-                code = re.search(code_pattern, sampled).group()
-                code_content = re.sub(code_pattern, r"\1", code)
+            if re.search(outlink_pattern, sampled) is not None:
+                code = re.search(outlink_pattern, sampled).group()
+                link = re.sub(outlink_pattern, r"\1", code)
+
+                fname = f"/tmp/LLMEvals_{uuid.uuid4()}.csv"
+                os.system(f"wget {link} -O {fname}")
+                table = pd.read_csv(fname)
+                if pd.isna(table.iloc[0, 0]):
+                    table = pd.read_csv(fname, header=header_rows)
+            elif "csv" in prompt:
+                code = re.search(csv_pattern, sampled).group()
+                code_content = re.sub(csv_pattern, r"\1", code)
                 code_content_processed = parse_csv_text(code_content)
                 # table = pd.read_csv(StringIO(code_content_processed), header=header_rows)
                 table = pd.read_csv(StringIO(code_content_processed))
@@ -186,8 +198,8 @@ class TableExtract(evals.Eval):
                     table = pd.read_csv(StringIO(code_content_processed), header=header_rows)
 
             elif "json" in prompt:
-                code = re.search(code_pattern, sampled).group()
-                code_content = re.sub(code_pattern, r"\1", code).replace("\"", "")
+                code = re.search(json_pattern, sampled).group()
+                code_content = re.sub(json_pattern, r"\1", code).replace("\"", "")
                 table = pd.DataFrame(json.loads(code_content))
             else:
                 table = pd.DataFrame()
