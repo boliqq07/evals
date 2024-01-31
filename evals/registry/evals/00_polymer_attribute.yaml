@@ -9,10 +9,10 @@ polymer_attribute.val.csv:
       Please give a complete list of Nickname, PCE_max(%), PCE_ave(%), Voc (V), Jsc (mA cm^2), FF;
       * Output in csv format with columns of those attribution, do not write units only the value like "10.5".
       * If there are multiple tables, concat them. Don't give me reference or using "...", give me complete table!
-      * Should return all columns mentioned, if empty just return `NaN`.
-      * Only return acceptor `PC71BM` related records!
-      * If duplicate acceptor, only remain record with highest PCE !
-      * Nickname should be short name of polymers, for example: `PffBT4T-2OD:PC61PM` should return `PffBT4T-2OD`.
+      * Should return all columns mentioned, if empty just return `NaN`. Nickname should not be empty.
+      * Nickname should be short name of polymers, for example: `PCBM:PffBT4T-2OD:PC61PM` should return `PffBT4T-2OD`.
+      * Only return acceptor `PC71BM` related records.
+      * If duplicate acceptor or with different experiment settings, only return the record with `highest PCE` !
       * Should find more information from the whole content, including tables, text.
       * For FF use 0.xx instead of xx.x, for example: 63.0 should return 0.63 !
       for example, you should return:

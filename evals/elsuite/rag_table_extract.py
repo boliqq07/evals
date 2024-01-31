@@ -308,32 +308,38 @@ class TableExtract(evals.Eval):
 
 def numFuzzyCompare(gt, pd):
     try:
-        return float(round(float(gt),2) == round(float(pd),2))
+        if gt == pd:
+            return 1.0
+        else:
+            return float(np.allclose(float(gt), float(pd), equal_nan=True, atol=1e-2, rtol=1e-2))
     except:
         return 0.0
 
 def tablePolymerMatching(df_ref, df_prompt, idx_col='Nickname'):
     df_ref = df_ref.set_index(idx_col)
+    if len(df_prompt) == 0:
+        return 0.0, 0.0
     df_prompt = df_prompt.set_index(idx_col)
-    N, M = df_ref.shape
-    prompt_columns = [col for col in df_prompt.columns if col not in [idx_col]]
     ref_columns = [col for col in df_ref.columns if col not in [idx_col]]
     idx_list = df_ref.index.values.tolist()
+    prompt_idx_list = df_prompt.index.values.tolist()
+    N, M = len(idx_list), len(ref_columns)
     match_score, total_match_score = 0.0, 0.0
-    for col in ref_columns:
+    for idx in idx_list:
         _total_matching = 1.0
-        for idx in idx_list:
+        for col in ref_columns:
             gt = df_ref.loc[idx, col]
             try:
                 pd = df_prompt.loc[idx, col]
             except:
-                pd = 'nan'
+                pd = 'not found'
             _is_matching = numFuzzyCompare(gt, pd)
             _total_matching *= _is_matching
             match_score += _is_matching / M
         total_match_score += _total_matching
         _total_matching = 1.0
-    recall = len(ref_columns) / len(prompt_columns)
+    recall = len([item for item in prompt_idx_list if item in idx_list]) / len(idx_list)
+    print(f'Recall:{recall}, Acc: {match_score / N * recall}, Strict Acc: {total_match_score / N * recall}')
     return match_score / N * recall, total_match_score / N * recall
     
 class TableExtractPolymer(evals.Eval):
@@ -387,8 +393,8 @@ class TableExtractPolymer(evals.Eval):
                                             raw_sample["compare_fields"]]
 
         samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
-        acc_score, strict_acc_score = self.eval_all_samples(recorder, samples)
+        score_list = self.eval_all_samples(recorder, samples)
         return {
-            "accuracy": np.mean(acc_score),
-            "strict_accuracy": np.mean(strict_acc_score)
+            "accuracy": np.mean([score[0] for score in score_list]),
+            "strict_accuracy": np.mean([score[1] for score in score_list])
         }
