@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import pandas as pd
+import numpy as np
 from pydantic import BaseModel
 import uuid
 
@@ -212,9 +213,13 @@ class TableExtract(evals.Eval):
             picked_str = open(answerfile_out, 'r').read()
         except:
             print(Path(sample.file_name).stem)
+            code = re.search(code_pattern, sampled).group()
+            code_content = re.sub(code_pattern, r"\1", code)
+            code_content_processed = parse_csv_text(code_content)
+            print(code_content)
+            print(code_content_processed)
             traceback.print_exc()
             record_match(
-                prompt=prompt,
                 correct=False,
                 expected=correct_str,
                 picked=sampled,
@@ -285,7 +290,6 @@ class TableExtract(evals.Eval):
                         jobtype=field if type(field) == str else field[0]
                     )
         record_match(
-            prompt=prompt,
             correct=match_all,
             expected=correct_str,
             picked=picked_str,
@@ -303,4 +307,91 @@ class TableExtract(evals.Eval):
         self.eval_all_samples(recorder, samples)
         return {
             "accuracy": evals.metrics.get_accuracy(recorder.get_events("match")),
+        }
+
+def numFuzzyCompare(gt, pd):
+    try:
+        return float(round(float(gt),2) == round(float(pd),2))
+    except:
+        return 0.0
+
+def tablePolymerMatching(df_ref, df_prompt, idx_col='Nickname'):
+    df_ref = df_ref.set_index(idx_col)
+    df_prompt = df_prompt.set_index(idx_col)
+    N, M = df_ref.shape
+    prompt_columns = [col for col in df_prompt.columns if col not in [idx_col]]
+    ref_columns = [col for col in df_ref.columns if col not in [idx_col]]
+    idx_list = df_ref.index.values.tolist()
+    match_score, total_match_score = 0.0, 0.0
+    for col in ref_columns:
+        _total_matching = 1.0
+        for idx in idx_list:
+            gt = df_ref.loc[idx, col]
+            try:
+                pd = df_prompt.loc[idx, col]
+            except:
+                pd = 'nan'
+            _is_matching = numFuzzyCompare(gt, pd)
+            _total_matching *= _is_matching
+            match_score += _is_matching / M
+        total_match_score += _total_matching
+        _total_matching = 1.0
+    recall = len(ref_columns) / len(prompt_columns)
+    return match_score / N * recall, total_match_score / N * recall
+    
+class TableExtractPolymer(evals.Eval):
+    def __init__(
+            self,
+            completion_fns: list[CompletionFn],
+            samples_jsonl: str,
+            *args,
+            instructions: Optional[str] = "",
+            **kwargs,
+    ):
+        super().__init__(completion_fns, *args, **kwargs)
+        assert len(completion_fns) < 5, "TableExtract only supports 3 completion fns"
+        self.samples_jsonl = samples_jsonl
+        self.instructions = instructions
+
+    def eval_sample(self, sample, rng):
+        assert isinstance(sample, FileSample)
+        prompt = \
+                self.instructions
+                # + f"\nThe fields should at least contain {sample.compare_fields}"
+        result = self.completion_fn(
+            prompt=prompt,
+            temperature=0.0,
+            max_tokens=5,
+            file_name=sample.file_name,
+            file_link=sample.file_link
+        )
+        sampled = result.get_completions()[0]
+        correct_df = pd.read_csv(sample.answerfile_name)
+
+        if "csv" in prompt:
+            try:
+                code = re.search(csv_pattern, sampled).group()
+                code_content = re.sub(csv_pattern, r"\1", code)
+                code_content_processed = parse_csv_text(code_content)
+                prompt_df = pd.read_csv(StringIO(code_content_processed))
+            except:
+                prompt_df = pd.DataFrame(columns=sample.compare_fields)
+
+        print(prompt_df)
+        print(correct_df)
+        print('*'*100)
+        
+        return tablePolymerMatching(correct_df, prompt_df)
+
+    def run(self, recorder: RecorderBase):
+        raw_samples = get_rag_dataset(self._prefix_registry_path(self.samples_jsonl).as_posix())
+        for raw_sample in raw_samples:
+            raw_sample["compare_fields"] = [field if type(field) == str else tuple(field) for field in
+                                            raw_sample["compare_fields"]]
+
+        samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
+        acc_score, strict_acc_score = self.eval_all_samples(recorder, samples)
+        return {
+            "accuracy": np.mean(acc_score),
+            "strict_accuracy": np.mean(strict_acc_score)
         }
