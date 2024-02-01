@@ -338,7 +338,7 @@ def tablePolymerMatching(df_ref, df_prompt, idx_col='Nickname'):
             match_score += _is_matching / M
         total_match_score += _total_matching
         _total_matching = 1.0
-    recall = len([item for item in prompt_idx_list if item in idx_list]) / len(idx_list)
+    recall = max(len([item for item in prompt_idx_list if item in idx_list]) / len(idx_list), 1.0)
     print(f'Recall:{recall}, Acc: {match_score / N * recall}, Strict Acc: {total_match_score / N * recall}')
     return match_score / N * recall, total_match_score / N * recall
     
