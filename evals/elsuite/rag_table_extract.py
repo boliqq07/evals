@@ -99,11 +99,20 @@ def fuzzy_compare(a: str, b: str) -> Union[bool, float]:
             mark = ""
         return f"{mark}{number:.1f} {unit}"
 
-    unit_str = ["nM", "uM", "µM", "mM", "M", "%", " %"]
+    def is_float(str):
+        try:
+            float(str)
+            return True
+        except ValueError:
+            return False
+
+    unit_str = ["nM", "uM", "µM", "mM", "%", " %"]
     nan_str = ["n/a", "nan", "na", "n.a.", "nd", "not determined", "not tested", "inactive"]
     a = a.strip()
     b = b.strip()
-    if (a[-2:] in unit_str or a[-1] in unit_str) and (b[-2:] in unit_str or b[-1] in unit_str):
+    if is_float(a) and is_float(b):
+        return np.allclose(float(a), float(b), equal_nan=True, atol=1e-2, rtol=1e-2)
+    elif (a[-2:] in unit_str or a[-1] in unit_str) and (b[-2:] in unit_str or b[-1] in unit_str):
         a = standardize_unit(a)
         b = standardize_unit(b)
         return a == b
@@ -306,16 +315,8 @@ class TableExtract(evals.Eval):
             "accuracy": evals.metrics.get_accuracy(recorder.get_events("match")),
         }
 
-def numFuzzyCompare(gt, pd):
-    try:
-        if gt == pd:
-            return 1.0
-        else:
-            return float(np.allclose(float(gt), float(pd), equal_nan=True, atol=1e-2, rtol=1e-2))
-    except:
-        return 0.0
 
-def tablePolymerMatching(df_ref, df_prompt, idx_col='Nickname'):
+def tableMatchingStrict(df_ref, df_prompt, idx_col='Nickname'):
     df_ref = df_ref.set_index(idx_col)
     if len(df_prompt) == 0:
         return 0.0, 0.0
@@ -333,68 +334,11 @@ def tablePolymerMatching(df_ref, df_prompt, idx_col='Nickname'):
                 pd = df_prompt.loc[idx, col]
             except:
                 pd = 'not found'
-            _is_matching = numFuzzyCompare(gt, pd)
-            _total_matching *= _is_matching
-            match_score += _is_matching / M
+            _is_matching = fuzzy_compare(gt, pd)
+            _total_matching *= float(_is_matching)
+            match_score += float(_is_matching) / M
         total_match_score += _total_matching
         _total_matching = 1.0
     recall = max(len([item for item in prompt_idx_list if item in idx_list]) / len(idx_list), 1.0)
     print(f'Recall:{recall}, Acc: {match_score / N * recall}, Strict Acc: {total_match_score / N * recall}')
     return match_score / N * recall, total_match_score / N * recall
-    
-class TableExtractPolymer(evals.Eval):
-    def __init__(
-            self,
-            completion_fns: list[CompletionFn],
-            samples_jsonl: str,
-            *args,
-            instructions: Optional[str] = "",
-            **kwargs,
-    ):
-        super().__init__(completion_fns, *args, **kwargs)
-        assert len(completion_fns) < 5, "TableExtract only supports 3 completion fns"
-        self.samples_jsonl = samples_jsonl
-        self.instructions = instructions
-
-    def eval_sample(self, sample, rng):
-        assert isinstance(sample, FileSample)
-        prompt = \
-                self.instructions
-                # + f"\nThe fields should at least contain {sample.compare_fields}"
-        result = self.completion_fn(
-            prompt=prompt,
-            temperature=0.0,
-            max_tokens=5,
-            file_name=sample.file_name,
-            file_link=sample.file_link
-        )
-        sampled = result.get_completions()[0]
-        correct_df = pd.read_csv(sample.answerfile_name)
-
-        if "csv" in prompt:
-            try:
-                code = re.search(csv_pattern, sampled).group()
-                code_content = re.sub(csv_pattern, r"\1", code)
-                code_content_processed = parse_csv_text(code_content)
-                prompt_df = pd.read_csv(StringIO(code_content_processed))
-            except:
-                prompt_df = pd.DataFrame(columns=sample.compare_fields)
-
-        print(prompt_df)
-        print(correct_df)
-        print('*'*100)
-        
-        return tablePolymerMatching(correct_df, prompt_df)
-
-    def run(self, recorder: RecorderBase):
-        raw_samples = get_rag_dataset(self._prefix_registry_path(self.samples_jsonl).as_posix())
-        for raw_sample in raw_samples:
-            raw_sample["compare_fields"] = [field if type(field) == str else tuple(field) for field in
-                                            raw_sample["compare_fields"]]
-
-        samples = [FileSample(**raw_sample) for raw_sample in raw_samples]
-        score_list = self.eval_all_samples(recorder, samples)
-        return {
-            "accuracy": np.mean([score[0] for score in score_list]),
-            "strict_accuracy": np.mean([score[1] for score in score_list])
-        }

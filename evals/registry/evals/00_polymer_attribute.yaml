@@ -2,7 +2,7 @@ polymer_attribute:
   id: polymer_attribute.val.csv
   metrics: [accuracy]
 polymer_attribute.val.csv:
-  class: evals.elsuite.rag_table_extract:TableExtractPolymer
+  class: evals.elsuite.rag_table_extract:TableExtract
   args:
     samples_jsonl: 00_polymer_attribute/samples.jsonl
     instructions: |
