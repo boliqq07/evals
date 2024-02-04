@@ -36,13 +36,13 @@ def parse_csv_text(csvtext: str) -> str:
     return "\n".join(unified_lines)
 
 
-def parse_table_multiindex(table: pd.DataFrame) -> pd.DataFrame:
+def parse_table_multiindex(table: pd.DataFrame, compare_fields: list = []) -> pd.DataFrame:
     """
     Parse a table with multiindex columns.
     """
 
     df = table.copy()
-    if df.columns.nlevels == 1:
+    if df.columns.nlevels == 1 and tuple in [type(f) for f in compare_fields]:
         coltypes = {col: type(df[col].iloc[0]) for col in df.columns}
         for col, ctype in coltypes.items():
             if ctype == str:
@@ -184,7 +184,7 @@ class TableExtract(evals.Eval):
         compare_fields_types = [type(x) for x in sample.compare_fields]
         header_rows = [0, 1] if tuple in compare_fields_types else [0]
 
-        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=header_rows).astype(str))
+        correct_answer = parse_table_multiindex(pd.read_csv(sample.answerfile_name, header=header_rows).astype(str), compare_fields=sample.compare_fields)
         correct_answer.to_csv("temp.csv", index=False)
         correct_str = open("temp.csv", 'r').read()
 
@@ -213,7 +213,7 @@ class TableExtract(evals.Eval):
                 table = pd.DataFrame(json.loads(code_content))
             else:
                 table = pd.DataFrame()
-            table = parse_table_multiindex(table)
+            table = parse_table_multiindex(table, compare_fields=sample.compare_fields)
 
             if sample.index not in table.columns:
                 table.columns = [sample.index] + list(table.columns)[1:]
