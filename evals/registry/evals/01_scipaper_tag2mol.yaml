@@ -6,3 +6,5 @@ scipaper_tag2mol.dev.v0:
   class: evals.elsuite.rag_match:RAGMatch
   args:
     samples_jsonl: 01_scipaper_tag2mol/samples.jsonl
+    func_comparison: evals.elsuite.utils:compare_molecule_similarity
+    record_match_threshold: 0.6

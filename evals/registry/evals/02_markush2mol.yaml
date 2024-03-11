@@ -3,6 +3,8 @@ markush2mol:
   metrics: [accuracy]
 
 markush2mol.dev.v0:
-  class: evals.elsuite.basic.match:Match
+  class: evals.elsuite.rag_match:RAGMatch
   args:
     samples_jsonl: 02_markush2mol/samples.jsonl
+    func_comparison: evals.elsuite.utils:compare_molecule_similarity
+    record_match_threshold: 0.6

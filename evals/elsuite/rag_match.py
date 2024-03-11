@@ -9,6 +9,7 @@ import evals
 import evals.metrics
 from evals.api import CompletionFn
 from evals.prompt.base import is_chat_prompt
+from evals.utils.misc import make_object
 
 
 def init_oss():
@@ -69,6 +70,9 @@ class RAGMatch(evals.Eval):
         max_tokens: int = 500,
         num_few_shot: int = 0,
         few_shot_jsonl: str = None,
+        func_postprocess_answer: str = None,
+        func_comparison: str = None,
+        record_match_threshold: float = -1,
         **kwargs,
     ):
         super().__init__(completion_fns, *args, **kwargs)
@@ -80,6 +84,10 @@ class RAGMatch(evals.Eval):
             assert few_shot_jsonl is not None, "few shot requires few shot sample dataset"
             self.few_shot_jsonl = few_shot_jsonl
             self.few_shot = evals.get_jsonl(self._prefix_registry_path(self.few_shot_jsonl))
+
+        self.func_postprocess_answer = make_object(func_postprocess_answer) if func_postprocess_answer else None
+        self.func_comparison = make_object(func_comparison) if func_comparison else None
+        self.record_match_threshold = record_match_threshold
 
     def eval_sample(self, sample: Any, *_):
         assert isinstance(sample, dict), "sample must be a dict"
@@ -102,27 +110,61 @@ class RAGMatch(evals.Eval):
             temperature=0.0,
             **{k: v for k, v in sample.items() if k not in ["input", "ideal"]}
         )
-        sampled = result.get_completions()[0]
+        sampled = result.get_completions()[0].strip()
 
-        extras = {}
+        extras = {"file_name": sample["file_name"], "file_link": sample["file_link"]} if "file_name" in sample else {}
         if hasattr(result, "extras"):
             if "extracted_answer" in result.extras:
                 sampled = result.extras["extracted_answer"].rstrip(".")
             extras = result.extras
+        else:
+            extras["answer"] = sampled
 
-        return evals.record_and_check_match(
-            prompt=prompt,
-            sampled=sampled,
-            expected=sample["ideal"],
-            file_name=sample["file_name"],
-            **extras
-        )
+        if self.func_postprocess_answer:
+            extras["answer"] = sampled
+            sampled = extras["extracted_answer"] = self.func_postprocess_answer(sampled)
+        
+        if self.func_comparison:
+            metrics = self.func_comparison(sampled, sample["ideal"][0])
+            if type(metrics) == bool:
+                evals.record.record_match(correct=metrics,
+                                          expected=sample["ideal"],
+                                          picked=sampled, sampled=extras["answer"],
+                                          prompt=prompt,
+                                          **extras)
+            else:
+                evals.record.record_metrics(**metrics)
+                if self.record_match_threshold > 0:
+                    evals.record.record_match(correct=metrics["score"] >= self.record_match_threshold,
+                                              **metrics,
+                                              expected=sample["ideal"],
+                                              picked=sampled, sampled=extras["answer"],
+                                              prompt=prompt,
+                                              **extras)
+        else:
+            return evals.record_and_check_match(
+                prompt=prompt,
+                sampled=sampled,
+                expected=sample["ideal"],
+                **extras
+            )
 
     def run(self, recorder):
         samples = get_rag_dataset(self._prefix_registry_path(self.samples_jsonl).as_posix())
         self.eval_all_samples(recorder, samples)
+
         events = recorder.get_events("match")
-        return {
-            "accuracy": evals.metrics.get_accuracy(events),
-            "boostrap_std": evals.metrics.get_bootstrap_accuracy_std(events),
-        }
+        if len(events) > 0:
+            record_metrics = {
+                "accuracy": evals.metrics.get_accuracy(events),
+                "bootstrap_std": evals.metrics.get_bootstrap_accuracy_std(events),
+            }
+        else:
+            record_metrics = {}
+
+        all_sample_metrics = recorder.get_metrics()
+        scores = [m["score"] for m in all_sample_metrics if m.get("score") is not None]
+        if scores:
+            record_metrics["score"] = sum(scores) / len(scores)
+
+        return record_metrics
