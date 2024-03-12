@@ -49,10 +49,17 @@ class Match(evals.Eval):
         )
         sampled = result.get_completions()[0]
 
+        extras = {}
+        if hasattr(result, "extras"):
+            if "extracted_answer" in result.extras:
+                sampled = result.extras["extracted_answer"].rstrip(".")
+            extras = result.extras
+
         return evals.record_and_check_match(
             prompt=prompt,
             sampled=sampled,
             expected=sample["ideal"],
+            **extras
         )
 
     def run(self, recorder):

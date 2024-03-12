@@ -123,6 +123,8 @@ synonyms = {
 }
 
 
+# Highlight: Part 1. Post-Processing Functions for LLM Outputs
+
 def get_answer(text, answer_prompt, ignore_case=False):
     if ignore_case:
         idx = text.lower().rfind(answer_prompt.lower())
@@ -142,22 +144,6 @@ def get_consensus(answers):
     return max(counts, key=counts.get)
 
 
-def compare_molecule(smi1, smi2) -> bool:
-    from rdkit import Chem
-    from rdkit.Chem import AllChem
-
-    mol1 = Chem.MolFromSmiles(smi1)
-    mol2 = Chem.MolFromSmiles(smi2)
-    if mol1 is None or mol2 is None:
-        return False
-    else:
-        return Chem.MolToSmiles(Chem.RemoveHs(mol1)) == Chem.MolToSmiles(Chem.RemoveHs(mol2))
-    # return False
-    # fp1 = AllChem.GetMorganFingerprint(mol1, 2)
-    # fp2 = AllChem.GetMorganFingerprint(mol2, 2)
-    # return DataStructs.TanimotoSimilarity(fp1, fp2)
-
-
 def normalize(s: str) -> str:
     """Lower text and remove punctuation, articles and extra whitespace."""
     s = s.lower()
@@ -167,6 +153,87 @@ def normalize(s: str) -> str:
     s = " ".join(s.split())
     return s
 
+
+def fuzzy_normalize_name(s):
+    if s.startswith("Unnamed"):
+        return ""
+    else:
+        """ 标准化字符串 """
+        # # 定义需要移除的单位和符号
+        # units = ["µM", "µg/mL", "nM", "%", "wt.%", "at.%", "at%", "wt%"]
+        # for unit in units:
+        #     s = s.replace(unit, "")
+
+        # 定义特定关键字
+        keywords = ["pIC50", "IC50", "EC50", "TC50", "GI50", "Ki", "Kd", "Kb", "pKb"]
+
+        # 移除非字母数字的字符，除了空格
+        s = re.sub(r'[^\w\s%.\-\(\)]', '', s)
+        if s in synonyms:
+            s = synonyms[s]
+
+        # 分割字符串为单词列表
+        words = s.split()
+
+        # 将关键字移到末尾
+        reordered_words = [word for word in words if word not in keywords]
+        keywords_in_string = [word for word in words if word in keywords]
+        reordered_words.extend(keywords_in_string)
+        # 重新组合为字符串
+        return ' '.join(reordered_words)
+
+
+def fuzzy_normalize_value(vi):
+    try:
+        vi = str(vi).lower()
+
+        if "bal" in vi or "remainder" in vi or "bas" in vi:
+            vi = "bal"
+            return "bal"
+
+        if ("nan" in vi and not "–" in vi) or "/" == vi or "n/a" in vi or "na" in vi or vi == "":
+            vi = "0"
+        vi = vi.replace("nan", "–").replace("~", "-")
+
+        pattern = r"\d+(?:\.\d+)?"
+        matches = re.findall(pattern, vi)
+        if len(matches) == 2:
+            vi = f"{matches[0]}-{matches[1]}"
+        elif len(matches) == 1:
+            vi = matches[0]
+
+        if "<" in vi:
+            vi = vi.replace("<", "")
+        if ">" in vi:
+            vi = vi.replace(">", "")
+
+        try:
+            vi = float(vi)
+            vi = round(vi, 3)
+        except:
+            # print(vi)
+            pass
+    except:
+        pass
+
+    return vi
+
+
+def extract_choice_and_value(sampled):
+    pattern = re.compile(r'\w\)\s\d+(?:\.\d+)?(?:\s?:\s?\d+(?:\.\d+)?)?\s?[°]?[CK]?')
+    matches = pattern.findall(sampled)
+    if matches:
+        sampled0 = pattern.findall(sampled)[0]
+    else:
+        return "No answer."
+    if sampled0 is None or sampled0 == []:
+        pass
+    else:
+        sampled = sampled0.replace("°", " ")
+        sampled = sampled.replace("  ", " ")
+    return sampled
+
+# Part 2. Comparison Functions for Post-Processed LLM Outputs
 
 def fuzzy_match(s1: str, s2: str) -> bool:
     s1 = normalize(s1)
@@ -264,69 +331,32 @@ def fuzzy_compare_value(a: str, b: str, metric="EditDistance") -> Union[bool, fl
             pass
 
 
-def fuzzy_normalize_name(s):
-    if s.startswith("Unnamed"):
-        return ""
+def compare_molecule_similarity(smi1, smi2) -> dict:
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+    from rdkit import DataStructs
+
+    mol1 = Chem.MolFromSmiles(re.sub(r'<.*>', '', str(smi1).strip("`")))
+    mol2 = Chem.MolFromSmiles(re.sub(r'<.*>', '', str(smi2).strip("`")))
+
+    if mol1 is None or mol2 is None:
+        sim = 0.0
     else:
-        """ 标准化字符串 """
-        # # 定义需要移除的单位和符号
-        # units = ["µM", "µg/mL", "nM", "%", "wt.%", "at.%", "at%", "wt%"]
-        # for unit in units:
-        #     s = s.replace(unit, "")
-
-        # 定义特定关键字
-        keywords = ["pIC50", "IC50", "EC50", "TC50", "GI50", "Ki", "Kd", "Kb", "pKb"]
-
-        # 移除非字母数字的字符，除了空格
-        s = re.sub(r'[^\w\s%.\-\(\)]', '', s)
-        if s in synonyms:
-            s = synonyms[s]
-
-        # 分割字符串为单词列表
-        words = s.split()
-
-        # 将关键字移到末尾
-        reordered_words = [word for word in words if word not in keywords]
-        keywords_in_string = [word for word in words if word in keywords]
-        reordered_words.extend(keywords_in_string)
-        # 重新组合为字符串
-        return ' '.join(reordered_words)
+        fp1 = AllChem.GetMorganFingerprint(mol1, 2)
+        fp2 = AllChem.GetMorganFingerprint(mol2, 2)
+        sim = DataStructs.TanimotoSimilarity(fp1, fp2)
+    return {"score": sim}
 
 
-def fuzzy_normalize_value(vi):
-    try:
-        vi = str(vi).lower()
+def compare_molecule_strict(smi1, smi2) -> bool:
+    from rdkit import Chem
 
-        if "bal" in vi or "remainder" in vi or "bas" in vi:
-            vi = "bal"
-            return "bal"
-
-        if ("nan" in vi and not "–" in vi) or "/" == vi or "n/a" in vi or "na" in vi or vi == "":
-            vi = "0"
-        vi = vi.replace("nan", "–").replace("~", "-")
-
-        pattern = r"\d+(?:\.\d+)?"
-        matches = re.findall(pattern, vi)
-        if len(matches) == 2:
-            vi = f"{matches[0]}-{matches[1]}"
-        elif len(matches) == 1:
-            vi = matches[0]
-
-        if "<" in vi:
-            vi = vi.replace("<", "")
-        if ">" in vi:
-            vi = vi.replace(">", "")
-
-        try:
-            vi = float(vi)
-            vi = round(vi, 3)
-        except:
-            # print(vi)
-            pass
-    except:
-        pass
-
-    return vi
+    mol1 = Chem.MolFromSmiles(smi1)
+    mol2 = Chem.MolFromSmiles(smi2)
+    if mol1 is None or mol2 is None:
+        return False
+    else:
+        return Chem.MolToSmiles(Chem.RemoveHs(mol1)) == Chem.MolToSmiles(Chem.RemoveHs(mol2))
 
 
 def tableMatching(df_ref, df_prompt, index='Compound', compare_fields=[], record=True, file_name=None):
@@ -350,7 +380,7 @@ def tableMatching(df_ref, df_prompt, index='Compound', compare_fields=[], record
         Match the indices of two dataframes.
         """
         renames = {}
-        name2query = lambda name: name if type(name) != tuple else name[0] if len(name) == 1 or name[1] == "" else name[1]
+        name2query = lambda name: name if type(name) != tuple else name[0] if len(name) == 1 or name[-1] == "" else name[-1]
         similarities = np.array(np.ones([len(ind0) + 15, len(ind1) + 15]), dtype=np.float64)
         querys0 = [name2query(name) for name in ind0]
         querys1 = [name2query(name) for name in ind1]
@@ -434,7 +464,7 @@ def tableMatching(df_ref, df_prompt, index='Compound', compare_fields=[], record
             except:
                 p = 'not found'
 
-            _is_matching = fuzzy_compare_name(gt, p, compare_value=True) if col != "SMILES" else compare_molecule(gt, p)
+            _is_matching = fuzzy_compare_name(gt, p, compare_value=True) if col != "SMILES" else compare_molecule_strict(gt, p)
             if col == "SMILES":
                 smiles_match_score += float(_is_matching)
             if record:
@@ -557,6 +587,38 @@ def ReactionDictMatchingSimple(dict_ref, dict_prompt, content: str = "inputs"):
     if total_leaves_dict1 == 0:  # Prevent division by zero
         return 0
     ratio = total_diff_leaves / total_leaves_dict1
+
+    if total_diff_leaves == total_leaves_dict1 and len(list(dict_ref.keys())) == len(list(dict_prompt.keys())):
+        values1 = list(dict_ref.values())
+        values2 = list(dict_prompt.values())
+
+        # Initialize containers for differences
+        differences = []
+
+        # The maximum length to iterate over
+        max_length = max(len(values1), len(values2))
+
+        total_diff_leaves = 0
+
+        for i in range(max_length):
+            try:
+                value1 = values1[i]
+                value2 = values2[i]
+            except IndexError:
+                # Handle cases where the lists have different lengths
+                differences.append('Different number of elements.')
+                break
+
+            # If both values are dictionaries, use DeepDiff to compare them deeply
+            if isinstance(value1, dict) and isinstance(value2, dict):
+                diff = DeepDiff(value1, value2, ignore_order=True, report_repetition=True)
+                if diff:
+                    total_diff_leaves += sum(len(diff.get(key, {})) for key in diff_keys)
+                    differences.append(diff)
+            elif value1 != value2:
+                total_diff_leaves += 1
+                # For non-dictionary values, just compare them directly
+                differences.append({'different_values': (value1, value2)})
 
     return 1.0 - ratio, diff
 
@@ -862,6 +924,7 @@ def macro_f1_score_3(model, prediction: List[List[Any]], answers: List[List[Any]
         return f1
     except:
         return 0.0
+
 
 def scrub_formatting_from_prompt(prompt):
     scrubbed_prompt = copy.copy(prompt)
