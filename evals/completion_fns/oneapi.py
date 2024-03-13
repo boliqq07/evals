@@ -23,7 +23,7 @@ from evals.utils.doc_utils import extract_text_and_fill_in_images, extract_text,
 
 
 model_max_tokens = {
-    "gpt-3.5-turbo": 15800,
+    "gpt-3.5-turbo": 13000,
 }
 
 

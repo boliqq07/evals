@@ -133,7 +133,7 @@ class GeminiCompletionFn(CompletionFn):
             contents = [openai_create_prompt]
             self.model = "gemini-pro"
 
-        genai.configure(api_key=np.random.choice(self.api_keys))
+        genai.configure(api_key=np.random.choice(self.api_keys), transport="rest")
 
         generation_config = {
             "temperature": 0.4,

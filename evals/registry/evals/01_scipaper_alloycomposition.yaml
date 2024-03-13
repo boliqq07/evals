@@ -4,7 +4,7 @@ alloycomposition:
   metrics: [accuracy]
 
 alloycomposition.dev.v0:
-  class: evals.elsuite.rag_table_extract_comp:TableExtract
+  class: evals.elsuite.rag_table_extract:TableExtract
   args:
     samples_jsonl: 01_alloycomposition/composition.jsonl
     instructions: |
